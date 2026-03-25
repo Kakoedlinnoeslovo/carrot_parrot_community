@@ -4,22 +4,22 @@ overview: "Greenfield MVP: node-based workflow editor + fal.ai orchestration + c
 todos:
   - id: scaffold-app
     content: Scaffold Next.js + DB + auth; define Workflow/Run schema and Zod-validated graph JSON
-    status: in_progress
+    status: completed
   - id: single-fal-node
     content: Implement one fal model + webhook + Run/RunStep persistence (no credits; optional run caps)
-    status: pending
+    status: completed
   - id: dag-orchestrator
     content: Add topological execution, branching, and artifact passing between nodes
-    status: pending
+    status: completed
   - id: editor-ui
     content: Build React Flow editor with curated node palette and server-backed model metadata
-    status: pending
+    status: completed
   - id: community-mvp
     content: Publish, remix (fork), feed, likes, public share slug
-    status: pending
+    status: completed
   - id: billing-credits
     content: "Deferred: Stripe subscription + credit ledger + per-model credit map; refunds on failure"
-    status: pending
+    status: cancelled
 isProject: false
 ---
 
