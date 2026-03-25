@@ -2,6 +2,26 @@
 
 Visual **AI workflow** editor built with [Next.js](https://nextjs.org): compose node graphs backed by [fal.ai](https://fal.ai) models, run them asynchronously via webhooks, then **publish**, **remix**, and **like** workflows in a simple community feed.
 
+## Screenshots
+
+### Studio — multi-step workflow and run status
+
+Build chains of inputs, fal model nodes, and a response node. The sidebar shows run progress, current model (for example `fal-ai/kling-video/v3/pro/image-to-video`), and ETA while steps execute.
+
+![Studio workflow with image-to-video pipeline and running status](docs/screenshots/studio-workflow-running.png)
+
+### Model search
+
+Search models by keyword; results list the fal endpoint path and display name so you can paste the model into a node.
+
+![Model search showing Kling Video endpoints](docs/screenshots/model-search-kling.png)
+
+### Wiring image + prompt to a model
+
+Connect an **IMAGE** node and **TEXT** node to a **FAL** node; map handles to the model’s inputs (here `fal-ai/nano-banana-2/edit` with `in` and `prompt`).
+
+![Image and text inputs connected to a fal model node](docs/screenshots/workflow-nano-banana-edit.png)
+
 ## Features
 
 - **Studio** — XYFlow-based graph editor; nodes map to fal models (metadata from `/api/models`).
