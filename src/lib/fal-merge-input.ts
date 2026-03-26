@@ -38,6 +38,11 @@ export function applyWorkflowInputAliases(
 
 export function sanitizeFalInput(input: Record<string, unknown>): Record<string, unknown> {
   const out = { ...input };
+  for (const k of Object.keys(out)) {
+    if (out[k] === null || out[k] === undefined) {
+      delete out[k];
+    }
+  }
   const urls = out.image_urls;
   if (Array.isArray(urls)) {
     const filtered = urls.filter((u) => typeof u === "string" && u.trim() !== "");

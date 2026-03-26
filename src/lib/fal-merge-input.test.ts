@@ -26,6 +26,17 @@ describe("sanitizeFalInput", () => {
     const out = sanitizeFalInput({ prompt: "x", image_urls: ["", "  "] });
     expect(out.image_urls).toBeUndefined();
   });
+
+  it("removes null and undefined keys so APIs do not receive explicit null", () => {
+    const out = sanitizeFalInput({
+      prompt: "hi",
+      reference_image_urls: null,
+      image_url: undefined,
+    } as Record<string, unknown>);
+    expect(out.reference_image_urls).toBeUndefined();
+    expect(out.image_url).toBeUndefined();
+    expect(out.prompt).toBe("hi");
+  });
 });
 
 describe("mergeFalInput", () => {

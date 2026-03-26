@@ -85,31 +85,70 @@ export function extractImageUrlsFromFalData(data: unknown): string[] {
     .map((m) => m.url);
 }
 
+function isNonUrlString(s: string): boolean {
+  const t = s.trim();
+  return t.length > 0 && !/^https?:\/\//i.test(t);
+}
+
+/** OpenAI-style message.content: string or array of { type, text } blocks. */
+function textFromOpenAiMessageContent(content: unknown): string | undefined {
+  if (typeof content === "string") {
+    const t = content.trim();
+    return t || undefined;
+  }
+  if (!Array.isArray(content)) return undefined;
+  const parts: string[] = [];
+  for (const block of content) {
+    if (typeof block === "string") {
+      const t = block.trim();
+      if (t) parts.push(t);
+    } else if (block && typeof block === "object" && !Array.isArray(block)) {
+      const b = block as Record<string, unknown>;
+      if (typeof b.text === "string" && b.text.trim()) parts.push(b.text.trim());
+    }
+  }
+  const joined = parts.join("\n").trim();
+  return joined || undefined;
+}
+
 /**
  * Plain-text completion from fal queue / webhook payloads (VLMs, LLMs).
- * e.g. openrouter/router/vision returns `{ output: string, usage: ... }` with no media URLs.
+ * openrouter/router/vision usually returns `{ output: string, usage: ... }`; queue payloads may nest
+ * or use chat-shaped `choices[].message.content` (string or content-part array).
  */
-export function extractTextFromFalData(data: unknown): string | undefined {
-  if (data == null) return undefined;
+export function extractTextFromFalData(data: unknown, depth = 0): string | undefined {
+  if (data == null || depth > 12) return undefined;
   if (typeof data === "string") {
     const t = data.trim();
-    return t || undefined;
+    return isNonUrlString(t) ? t : undefined;
   }
   if (typeof data !== "object" || Array.isArray(data)) return undefined;
   const o = data as Record<string, unknown>;
 
-  if (typeof o.output === "string") {
-    const t = o.output.trim();
-    if (t) return t;
-  }
-  if (typeof o.text === "string") {
-    const t = o.text.trim();
-    if (t) return t;
+  const stringKeyOrder = [
+    "output",
+    "text",
+    "content",
+    "caption",
+    "description",
+    "answer",
+    "response",
+    "completion",
+  ] as const;
+  for (const k of stringKeyOrder) {
+    const v = o[k];
+    if (typeof v === "string" && isNonUrlString(v)) return v.trim();
   }
 
-  if (o.data != null && typeof o.data === "object" && !Array.isArray(o.data)) {
-    const inner = extractTextFromFalData(o.data);
+  if (typeof o.output === "object" && o.output != null && !Array.isArray(o.output)) {
+    const inner = extractTextFromFalData(o.output, depth + 1);
     if (inner) return inner;
+  }
+
+  if (typeof o.message === "object" && o.message != null && !Array.isArray(o.message)) {
+    const msg = o.message as Record<string, unknown>;
+    const fromContent = textFromOpenAiMessageContent(msg.content);
+    if (fromContent) return fromContent;
   }
 
   const choices = o.choices;
@@ -117,8 +156,16 @@ export function extractTextFromFalData(data: unknown): string | undefined {
     const c0 = choices[0] as Record<string, unknown>;
     const msg = c0.message;
     if (msg != null && typeof msg === "object" && !Array.isArray(msg)) {
-      const content = (msg as Record<string, unknown>).content;
-      if (typeof content === "string" && content.trim()) return content.trim();
+      const fromContent = textFromOpenAiMessageContent((msg as Record<string, unknown>).content);
+      if (fromContent) return fromContent;
+    }
+  }
+
+  for (const k of ["data", "result", "response", "body", "payload"] as const) {
+    const v = o[k];
+    if (v != null && typeof v === "object" && !Array.isArray(v)) {
+      const inner = extractTextFromFalData(v, depth + 1);
+      if (inner) return inner;
     }
   }
 
