@@ -73,8 +73,10 @@ model Workflow {
   graphJson        String
   visibility       String  @default("private") // private | published
   parentWorkflowId String?
-  coverImageUrl    String?
-  description      String?
+  coverImageUrl     String?
+  /// "image" | "video" — aligns with community card when URL has no file extension
+  coverPreviewKind  String?
+  description       String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

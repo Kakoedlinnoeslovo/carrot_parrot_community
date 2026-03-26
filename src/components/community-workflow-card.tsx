@@ -6,6 +6,7 @@ import { LikeButton } from "@/components/like-button";
 import { RemixButton } from "@/components/remix-button";
 import { TrackedLink } from "@/components/tracked-link";
 import type { CommunityPreview } from "@/lib/community-preview";
+import type { FalModelUsedRow } from "@/lib/graph-models-used";
 
 function displayName(name: string | null | undefined, email: string | null | undefined): string {
   return name?.trim() || email?.split("@")[0]?.trim() || "Creator";
@@ -18,11 +19,26 @@ function initials(from: string): string {
   return (parts[0]![0]! + parts[1]![0]!).toUpperCase();
 }
 
+function modelAccentClass(endpointId: string): string {
+  const id = endpointId.toLowerCase();
+  if (id.includes("video") || id.includes("kling") || id.includes("/v2v") || id.includes("image-to-video")) {
+    return "bg-sky-500/90";
+  }
+  if (id.includes("workflow-utilities") || id.includes("/workflows/")) {
+    return "bg-amber-500/90";
+  }
+  if (id.includes("image") || id.includes("flux") || id.includes("banana") || id.includes("compress")) {
+    return "bg-violet-500/90";
+  }
+  return "bg-zinc-500/80";
+}
+
 type Props = {
   workflowId: string;
   slug: string;
   title: string | null;
   preview: CommunityPreview;
+  modelsUsed?: FalModelUsedRow[];
   authorName: string | null;
   authorEmail: string | null;
   authorImage: string | null;
@@ -37,6 +53,7 @@ export function CommunityWorkflowCard({
   slug,
   title,
   preview,
+  modelsUsed = [],
   authorName,
   authorEmail,
   authorImage,
@@ -142,7 +159,28 @@ export function CommunityWorkflowCard({
           <span className="truncate text-xs font-medium text-zinc-100">{author}</span>
         </div>
 
-        <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-20 p-3 pt-10">
+        <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-20 space-y-1.5 p-3 pb-11 pt-8">
+          {modelsUsed.length > 0 ? (
+            <div className="flex max-w-full gap-1 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+              <span className="sr-only">Models used</span>
+              {modelsUsed.map((m) => (
+                <span
+                  key={m.id}
+                  className="inline-flex max-w-[min(200px,45vw)] shrink-0 items-center gap-1 rounded-md border border-white/12 bg-black/50 px-1.5 py-0.5 font-mono text-[10px] leading-tight text-zinc-200 backdrop-blur-sm"
+                  title={m.count > 1 ? `${m.id} (${m.count}×)` : m.id}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 shrink-0 rounded-sm ${modelAccentClass(m.id)}`}
+                    aria-hidden
+                  />
+                  <span className="min-w-0 truncate">{m.id}</span>
+                  {m.count > 1 ? (
+                    <span className="shrink-0 tabular-nums text-zinc-500">×{m.count}</span>
+                  ) : null}
+                </span>
+              ))}
+            </div>
+          ) : null}
           <h2 className="line-clamp-2 text-base font-semibold leading-snug text-white drop-shadow-sm">
             {title?.trim() || "Untitled workflow"}
           </h2>

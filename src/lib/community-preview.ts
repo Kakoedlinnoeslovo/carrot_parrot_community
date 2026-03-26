@@ -15,9 +15,13 @@ function guessKindFromUrl(url: string): "image" | "video" {
 export function communityPreviewFromWorkflow(
   coverImageUrl: string | null | undefined,
   graphJson: string,
+  coverPreviewKind?: string | null,
 ): CommunityPreview {
   const cover = coverImageUrl?.trim();
   if (cover && /^https?:\/\//i.test(cover)) {
+    if (coverPreviewKind === "video" || coverPreviewKind === "image") {
+      return { type: "media", url: cover, kind: coverPreviewKind };
+    }
     return { type: "media", url: cover, kind: guessKindFromUrl(cover) };
   }
 

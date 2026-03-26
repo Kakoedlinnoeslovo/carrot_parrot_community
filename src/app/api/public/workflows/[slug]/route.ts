@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { extractFalModelsUsed } from "@/lib/graph-models-used";
 import { prisma } from "@/lib/db";
+import { safeParseWorkflowGraph } from "@/lib/workflow-graph";
 
 type RouteCtx = { params: Promise<{ slug: string }> };
 
@@ -30,6 +32,9 @@ export async function GET(_req: Request, ctx: RouteCtx) {
     likedByMe = !!like;
   }
 
+  const parsed = safeParseWorkflowGraph(wf.graphJson);
+  const modelsUsed = parsed.success ? extractFalModelsUsed(parsed.data) : [];
+
   return NextResponse.json({
     workflow: {
       id: wf.id,
@@ -38,6 +43,8 @@ export async function GET(_req: Request, ctx: RouteCtx) {
       slug: wf.slug,
       graphJson: wf.graphJson,
       coverImageUrl: wf.coverImageUrl,
+      coverPreviewKind: wf.coverPreviewKind,
+      modelsUsed,
       updatedAt: wf.updatedAt,
       author: {
         name: wf.user.name ?? wf.user.email?.split("@")[0] ?? "Creator",
