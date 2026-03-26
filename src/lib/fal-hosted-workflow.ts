@@ -1,4 +1,4 @@
-import { fal } from "@/lib/fal-client";
+import type { FalClient } from "@/lib/fal-client";
 
 /** fal-hosted workflow pipeline IDs use the `workflows/...` namespace (stream API). */
 export function isFalHostedWorkflowEndpoint(endpointId: string): boolean {
@@ -32,6 +32,7 @@ export type FalHostedWorkflowResult =
  * Used by the orchestrator for `workflows/*` ids; individual models keep using `queue.submit`.
  */
 export async function runFalHostedWorkflowStream(
+  fal: FalClient,
   endpointId: string,
   input: Record<string, unknown>,
 ): Promise<FalHostedWorkflowResult> {

@@ -5,7 +5,7 @@ import { isFalEndpointIdAllowed } from "@/lib/fal-model-policy";
 /** Back-compat: thin proxy to fal Platform API (prefer GET /api/fal/models). */
 export async function GET() {
   try {
-    const data = await listFalModels({ limit: 50, status: "active" });
+    const data = await listFalModels({ limit: 50, status: "active" }, process.env.FAL_KEY);
     const allowed = data.models.filter((m) => isFalEndpointIdAllowed(m.endpoint_id));
     return NextResponse.json({
       models: allowed.map((m) => ({

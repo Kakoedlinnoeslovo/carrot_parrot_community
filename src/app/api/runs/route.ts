@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { assertCanRunWorkflow, bumpDailyRunCount } from "@/lib/guardrails";
 import { processRun } from "@/lib/orchestrator";
+import { graphNeedsFalKey, hasEffectiveFalApiKey } from "@/lib/fal-effective-key";
 import { assertAcyclic, safeParseWorkflowGraph } from "@/lib/workflow-graph";
 import { z } from "zod";
 
@@ -40,6 +41,19 @@ export async function POST(req: Request) {
   }
   const graph = graphParsed.data;
   assertAcyclic(graph);
+
+  if (graphNeedsFalKey(graph)) {
+    const hasKey = await hasEffectiveFalApiKey(session.user.id);
+    if (!hasKey) {
+      return NextResponse.json(
+        {
+          error:
+            "Add your fal.ai API key in onboarding or Settings (or set FAL_KEY on the server for operator-funded runs).",
+        },
+        { status: 400 },
+      );
+    }
+  }
 
   try {
     await assertCanRunWorkflow(session.user.id, session.user.email, graph);

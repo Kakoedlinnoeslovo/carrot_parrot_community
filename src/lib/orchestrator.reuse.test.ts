@@ -1,4 +1,15 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import type { FalClient } from "@/lib/fal-client";
+
+const falMockCtx = vi.hoisted(() => {
+  const submit = vi.fn();
+  const subscribeToStatus = vi.fn();
+  const result = vi.fn();
+  const mockFal = {
+    queue: { submit, subscribeToStatus, result },
+  };
+  return { submit, subscribeToStatus, result, mockFal };
+});
 
 vi.mock("@/lib/db", () => ({
   prisma: {
@@ -17,13 +28,8 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@/lib/fal-client", () => ({
-  fal: {
-    queue: {
-      submit: vi.fn(),
-      subscribeToStatus: vi.fn(),
-      result: vi.fn(),
-    },
-  },
+  fal: falMockCtx.mockFal,
+  createFalClientFromApiKey: () => falMockCtx.mockFal,
   formatFalClientError: (e: unknown) => String(e),
 }));
 
@@ -33,7 +39,6 @@ vi.mock("@/lib/fal-hosted-workflow", () => ({
 }));
 
 import { prisma } from "@/lib/db";
-import { fal } from "@/lib/fal-client";
 import { DEFAULT_WORKFLOW_GRAPH } from "@/lib/default-graph";
 import { mergeFalInput, sanitizeFalInput, type MergeArtifact } from "@/lib/fal-merge-input";
 import { parseWorkflowGraph } from "@/lib/workflow-graph";
@@ -206,9 +211,9 @@ describe("scheduleReadyFalSteps reuse", () => {
       }) as typeof prisma.runStep.update,
     );
 
-    await scheduleReadyFalSteps("run-new", graph);
+    await scheduleReadyFalSteps("run-new", graph, falMockCtx.mockFal as unknown as FalClient);
 
-    expect(fal.queue.submit).not.toHaveBeenCalled();
+    expect(falMockCtx.submit).not.toHaveBeenCalled();
     expect(prisma.runStep.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "s-g1" },
@@ -248,7 +253,7 @@ describe("scheduleReadyFalSteps reuse", () => {
       }) as typeof prisma.runStep.update,
     );
 
-    vi.mocked(fal.queue.submit).mockResolvedValue({
+    vi.mocked(falMockCtx.submit).mockResolvedValue({
       request_id: "req-1",
       status: "IN_QUEUE",
       queue_position: 0,
@@ -257,8 +262,8 @@ describe("scheduleReadyFalSteps reuse", () => {
       cancel_url: "",
     });
 
-    await scheduleReadyFalSteps("run-new", graph);
+    await scheduleReadyFalSteps("run-new", graph, falMockCtx.mockFal as unknown as FalClient);
 
-    expect(fal.queue.submit).toHaveBeenCalled();
+    expect(falMockCtx.submit).toHaveBeenCalled();
   });
 });

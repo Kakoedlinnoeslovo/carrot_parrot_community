@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { fal } from "@/lib/fal-client";
+import { createFalClientFromApiKey } from "@/lib/fal-client";
+import { resolveEffectiveFalApiKey } from "@/lib/fal-effective-key";
 
 const MAX_BYTES = 25 * 1024 * 1024;
 
@@ -9,9 +10,14 @@ export async function POST(req: Request) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!process.env.FAL_KEY) {
-    return NextResponse.json({ error: "FAL_KEY is not configured" }, { status: 503 });
+  const apiKey = await resolveEffectiveFalApiKey(session.user.id);
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "No fal.ai API key configured. Add yours in Settings or set FAL_KEY on the server." },
+      { status: 503 },
+    );
   }
+  const fal = createFalClientFromApiKey(apiKey);
 
   let form: FormData;
   try {

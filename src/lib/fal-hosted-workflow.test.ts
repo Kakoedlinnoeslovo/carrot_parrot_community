@@ -1,12 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-
-vi.mock("@/lib/fal-client", () => ({
-  fal: {
-    stream: vi.fn(),
-  },
-}));
-
-import { fal } from "@/lib/fal-client";
+import type { FalClient } from "@/lib/fal-client";
 import { isFalHostedWorkflowEndpoint, runFalHostedWorkflowStream } from "./fal-hosted-workflow";
 
 describe("isFalHostedWorkflowEndpoint", () => {
@@ -20,6 +13,10 @@ describe("isFalHostedWorkflowEndpoint", () => {
 });
 
 describe("runFalHostedWorkflowStream", () => {
+  function mockClient(stream: ReturnType<typeof vi.fn>) {
+    return { stream } as unknown as FalClient;
+  }
+
   it("returns media from output event payload", async () => {
     const events = [
       { type: "submit", node_id: "n1", app_id: "fal-ai/x" },
@@ -34,9 +31,8 @@ describe("runFalHostedWorkflowStream", () => {
       },
       done: () => Promise.resolve(events[events.length - 1]),
     };
-    vi.mocked(fal.stream).mockResolvedValue(mockStream as Awaited<ReturnType<typeof fal.stream>>);
-
-    const r = await runFalHostedWorkflowStream("workflows/template/weather", {
+    const streamFn = vi.fn().mockResolvedValue(mockStream);
+    const r = await runFalHostedWorkflowStream(mockClient(streamFn), "workflows/template/weather", {
       weather: "rain",
       image_urls: ["https://example.com/in.jpg"],
     });
@@ -53,9 +49,10 @@ describe("runFalHostedWorkflowStream", () => {
       },
       done: () => Promise.resolve({}),
     };
-    vi.mocked(fal.stream).mockResolvedValue(mockStream as Awaited<ReturnType<typeof fal.stream>>);
-
-    const r = await runFalHostedWorkflowStream("workflows/fal-ai/sdxl-sticker", { prompt: "hi" });
+    const streamFn = vi.fn().mockResolvedValue(mockStream);
+    const r = await runFalHostedWorkflowStream(mockClient(streamFn), "workflows/fal-ai/sdxl-sticker", {
+      prompt: "hi",
+    });
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.error).toBe("step failed");

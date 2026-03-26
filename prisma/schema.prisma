@@ -19,6 +19,8 @@ model User {
   image          String?
   dailyRunCount  Int       @default(0)
   lastRunDay     String? // UTC date YYYY-MM-DD for daily cap reset
+  /// AES-256-GCM encrypted fal.ai API key (see src/lib/fal-key-crypto.ts)
+  falKeyEnc      String?
 
   accounts Account[]
   sessions Session[]

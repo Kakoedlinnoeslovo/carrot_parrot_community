@@ -1,9 +1,14 @@
-import { ApiError, fal, ValidationError } from "@fal-ai/client";
+import { ApiError, createFalClient, fal, ValidationError, type FalClient } from "@fal-ai/client";
 
 /** Doc index and links: `src/lib/fal-docs-reference.ts` */
 
 if (process.env.FAL_KEY) {
   fal.config({ credentials: process.env.FAL_KEY });
+}
+
+/** Isolated client for a specific API key (BYOK). Prefer this over the global `fal` in request/code paths. */
+export function createFalClientFromApiKey(apiKey: string): FalClient {
+  return createFalClient({ credentials: apiKey.trim() });
 }
 
 /**
@@ -38,3 +43,4 @@ export function formatFalClientError(e: unknown): string {
 }
 
 export { fal };
+export type { FalClient };

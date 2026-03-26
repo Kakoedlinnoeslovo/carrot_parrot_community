@@ -1271,7 +1271,7 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
           )}
           {runStatus === "succeeded" && outputsMissing && (
             <p className="mt-2 text-xs text-amber-500/90">
-              Run finished but no media URLs were stored. Check FAL_KEY, fal logs, and server terminal
+              Run finished but no media URLs were stored. Check your fal API key in Settings, fal logs, and server terminal
               for errors.
             </p>
           )}

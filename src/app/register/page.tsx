@@ -41,7 +41,7 @@ export default function RegisterPage() {
       return;
     }
     track(AnalyticsEvent.authRegisterSuccess);
-    router.push("/studio");
+    router.push("/onboarding/fal-key");
     router.refresh();
   }
 

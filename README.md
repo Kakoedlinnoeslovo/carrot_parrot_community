@@ -38,7 +38,7 @@ Connect an **IMAGE** node and **TEXT** node to a **FAL** node; map handles to th
 ## Prerequisites
 
 - Node.js 20+  
-- A [fal.ai](https://fal.ai) API key (`FAL_KEY`)  
+- A [fal.ai](https://fal.ai) API key per user (saved after sign-up, encrypted with `AUTH_SECRET`) or an optional operator key `FAL_KEY` for dev / shared billing  
 - For local webhooks, a publicly reachable `NEXT_PUBLIC_APP_URL` (e.g. [ngrok](https://ngrok.com) or similar) so fal can POST back to your machine  
 
 ## Setup
@@ -48,7 +48,7 @@ git clone https://github.com/Kakoedlinnoeslovo/carrot_parrot_community.git
 cd carrot_parrot_community
 npm install
 cp .env.example .env
-# Edit .env: AUTH_SECRET, FAL_KEY, NEXT_PUBLIC_APP_URL, DATABASE_URL as needed
+# Edit .env: AUTH_SECRET (required for encrypting user fal keys), NEXT_PUBLIC_APP_URL, DATABASE_URL. FAL_KEY is optional if every user adds their own key.
 npx prisma migrate dev
 npm run dev
 ```
@@ -64,7 +64,7 @@ See [`.env.example`](./.env.example) for all variables. Important:
 | `DATABASE_URL` | Prisma connection string (default SQLite file) |
 | `AUTH_SECRET` | Session encryption (`openssl rand -base64 32`) |
 | `NEXT_PUBLIC_APP_URL` | Canonical app URL (webhook base) |
-| `FAL_KEY` | Server-side fal API key |
+| `FAL_KEY` | Optional server fal key (fallback if a user has not saved their own) |
 | `MAX_*` / `ALLOWED_RUN_EMAILS` | Optional test-phase guardrails |
 
 ## Scripts

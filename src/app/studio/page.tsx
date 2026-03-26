@@ -1,12 +1,13 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { NewWorkflowForm } from "@/components/new-workflow-form";
 import { prisma } from "@/lib/db";
 
 export default async function StudioIndexPage() {
   const session = await auth();
-  if (!session?.user?.id) redirect("/login");
+  if (!session?.user?.id) {
+    return null;
+  }
 
   const workflows = await prisma.workflow.findMany({
     where: { userId: session.user.id },
@@ -26,7 +27,11 @@ export default async function StudioIndexPage() {
         <NewWorkflowForm />
       </div>
       <p className="mt-2 text-sm text-zinc-400">
-        Open the canvas, connect nodes, and run with your fal.ai key on the server.
+        Open the canvas, connect nodes, and run on your fal.ai quota. Change your key anytime under{" "}
+        <Link href="/settings/fal-key" className="text-orange-400 underline-offset-4 hover:underline">
+          fal key
+        </Link>
+        .
       </p>
 
       <ul className="mt-10 divide-y divide-white/10 overflow-hidden rounded-xl border border-white/10 bg-white/[0.04] shadow-[0_20px_56px_-28px_rgba(0,0,0,0.65)] backdrop-blur-xl">

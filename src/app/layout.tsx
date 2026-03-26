@@ -62,6 +62,13 @@ export default async function RootLayout({
                   >
                     Studio
                   </TrackedLink>
+                  <TrackedLink
+                    href="/settings/fal-key"
+                    eventLabel="nav_settings_fal"
+                    className="text-zinc-300 transition-colors duration-300 ease-out hover:text-white"
+                  >
+                    fal key
+                  </TrackedLink>
                   <span className="max-w-[12rem] truncate text-zinc-500">{session.user.email}</span>
                   <SignOutButton />
                 </>

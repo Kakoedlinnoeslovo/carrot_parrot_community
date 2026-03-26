@@ -2,7 +2,12 @@ import type { WorkflowGraph } from "@/lib/workflow-graph";
 import { parseWorkflowGraph } from "@/lib/workflow-graph";
 import { prisma } from "@/lib/db";
 import { getAppUrl } from "@/lib/env";
-import { fal, formatFalClientError } from "@/lib/fal-client";
+import {
+  createFalClientFromApiKey,
+  formatFalClientError,
+  type FalClient,
+} from "@/lib/fal-client";
+import { resolveEffectiveFalApiKey } from "@/lib/fal-effective-key";
 import { isFalEndpointIdAllowed } from "@/lib/fal-model-policy";
 import { isFalHostedWorkflowEndpoint, runFalHostedWorkflowStream } from "@/lib/fal-hosted-workflow";
 import {
@@ -80,6 +85,7 @@ export function extractImageUrlsFromFalData(data: unknown): string[] {
 }
 
 async function runHostedWorkflowStep(
+  fal: FalClient,
   runId: string,
   stepId: string,
   endpointId: string,
@@ -88,7 +94,7 @@ async function runHostedWorkflowStep(
   const existing = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
   if (!existing || existing.status !== "running") return;
 
-  const result = await runFalHostedWorkflowStream(endpointId, mergedInput);
+  const result = await runFalHostedWorkflowStream(fal, endpointId, mergedInput);
 
   const step = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
   if (!step || step.status === "succeeded") return;
@@ -146,7 +152,9 @@ async function continueRunAfterFalOutput(runId: string) {
   });
   if (!run) return;
   const graph = parseWorkflowGraph(run.workflow.graphJson);
-  await scheduleReadyFalSteps(runId, graph);
+  const key = await resolveEffectiveFalApiKey(run.userId);
+  const fal = key ? createFalClientFromApiKey(key) : null;
+  await scheduleReadyFalSteps(runId, graph, fal);
   await schedulePassthroughSteps(runId, graph);
   await finalizeRunIfDone(runId);
 }
@@ -195,6 +203,7 @@ async function schedulePassthroughSteps(runId: string, graph: WorkflowGraph) {
 }
 
 async function pollFalUntilComplete(
+  fal: FalClient,
   runId: string,
   stepId: string,
   endpointId: string,
@@ -298,9 +307,19 @@ export async function processRun(runId: string) {
   if (!run) return;
   if (run.status === "succeeded" || run.status === "failed") return;
 
-  await prisma.run.update({ where: { id: runId }, data: { status: "running" } });
-
   const graph = parseWorkflowGraph(run.workflow.graphJson);
+  const needsFal = graph.nodes.some((n) => n.type === "fal_model");
+  const falKey = await resolveEffectiveFalApiKey(run.userId);
+  if (needsFal && !falKey) {
+    await failRun(
+      runId,
+      "Add your fal.ai API key in onboarding or Settings, or set FAL_KEY on the server.",
+    );
+    return;
+  }
+  const fal = falKey ? createFalClientFromApiKey(falKey) : null;
+
+  await prisma.run.update({ where: { id: runId }, data: { status: "running" } });
 
   for (const node of graph.nodes) {
     if (node.type === "input_prompt") {
@@ -367,20 +386,22 @@ export async function processRun(runId: string) {
   }
 
   await schedulePassthroughSteps(runId, graph);
-  await scheduleReadyFalSteps(runId, graph);
+  await scheduleReadyFalSteps(runId, graph, fal);
   await finalizeRunIfDone(runId);
 }
 
 /** Exported for tests; also used by `processRun` and `continueRunAfterFalOutput`. */
-export async function scheduleReadyFalSteps(runId: string, graph: WorkflowGraph) {
-  if (!process.env.FAL_KEY) {
-    const needsFal = graph.nodes.some((n) => n.type === "fal_model");
-    if (needsFal) {
-      await failRun(
-        runId,
-        "FAL_KEY is not configured. Add it to run image generation nodes.",
-      );
-    }
+export async function scheduleReadyFalSteps(
+  runId: string,
+  graph: WorkflowGraph,
+  fal: FalClient | null,
+) {
+  const needsFal = graph.nodes.some((n) => n.type === "fal_model");
+  if (needsFal && !fal) {
+    await failRun(
+      runId,
+      "Add your fal.ai API key in onboarding or Settings, or set FAL_KEY on the server.",
+    );
     return;
   }
 
@@ -505,7 +526,7 @@ export async function scheduleReadyFalSteps(runId: string, graph: WorkflowGraph)
     });
 
     if (isFalHostedWorkflowEndpoint(node.data.falModelId)) {
-      void runHostedWorkflowStep(runId, step.id, node.data.falModelId, mergedInput);
+      void runHostedWorkflowStep(fal!, runId, step.id, node.data.falModelId, mergedInput);
       continue;
     }
 
@@ -514,7 +535,7 @@ export async function scheduleReadyFalSteps(runId: string, graph: WorkflowGraph)
     )}`;
 
     try {
-      const queued = await fal.queue.submit(node.data.falModelId, {
+      const queued = await fal!.queue.submit(node.data.falModelId, {
         input: mergedInput,
         webhookUrl,
       });
@@ -523,7 +544,7 @@ export async function scheduleReadyFalSteps(runId: string, graph: WorkflowGraph)
         data: { falRequestId: queued.request_id },
       });
 
-      void pollFalUntilComplete(runId, step.id, node.data.falModelId, queued.request_id);
+      void pollFalUntilComplete(fal!, runId, step.id, node.data.falModelId, queued.request_id);
     } catch (e) {
       const msg = formatFalClientError(e);
       await prisma.runStep.update({

@@ -17,9 +17,13 @@ const highlights = [
 ] as const;
 
 const steps = [
-  { n: "1", title: "Create an account", body: "Sign up free—your fal.ai API key stays on the server when you run workflows." },
+  {
+    n: "1",
+    title: "Create an account",
+    body: "Sign up free, then paste your personal fal.ai API key once—it is stored encrypted and used for your runs.",
+  },
   { n: "2", title: "Open Studio", body: "Add input nodes, model nodes, and a preview—then draw lines between ports." },
-  { n: "3", title: "Run and publish", body: "Execute the graph with your key, tweak results, then share to the community if you want." },
+  { n: "3", title: "Run and publish", body: "Execute the graph on your fal quota, tweak results, then share to the community if you want." },
 ] as const;
 
 export default function Home() {
