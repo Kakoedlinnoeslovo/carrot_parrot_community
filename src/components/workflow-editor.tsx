@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -10,6 +10,7 @@ import {
   useEdgesState,
   useNodesState,
   type Connection,
+  type Edge,
   type Node,
   type NodeProps,
   Handle,
@@ -19,38 +20,654 @@ import "@xyflow/react/dist/style.css";
 import { nanoid } from "nanoid";
 import { graphToFlow, flowToGraph } from "@/lib/flow-adapter";
 import type { WorkflowGraph } from "@/lib/workflow-graph";
+import { FAL_WORKFLOW_TEMPLATES } from "@/lib/fal-workflow-templates";
+import { FalModelForm } from "@/components/fal-model-form";
+import type { RJSFSchema } from "@rjsf/utils";
+import {
+  listMappableInputKeysFromSchema,
+  listMappableOutputKeysFromSchema,
+  orderOutputHandleKeys,
+} from "@/lib/fal-schema-handles";
+
+const DEFAULT_OUTPUT_HANDLE_KEYS = ["out", "images", "text", "media"] as const;
+
+/** Shared classes: larger grab area, hover affordance (visual size set per node + globals). */
+const FLOW_HANDLE_BASE =
+  "!pointer-events-auto !h-3.5 !w-3.5 !min-h-[14px] !min-w-[14px] !rounded-sm !border !border-white/25 !shadow-sm nodrag transition-[box-shadow,transform] duration-150 ease-out hover:z-10 hover:!scale-125 hover:!shadow-md hover:!ring-2 hover:!ring-white/35";
+
+type InputSlot = { id: string; kind: "image" | "text"; label: string; value: string };
+
+type WireKind = "image" | "text" | "any";
+
+function inferSourceWireKind(
+  nodes: Node[],
+  source: string,
+  sourceHandle: string | null | undefined,
+): WireKind {
+  const n = nodes.find((x) => x.id === source);
+  if (!n) return "any";
+  if (n.type === "input_image") return "image";
+  if (n.type === "input_prompt") return "text";
+  if (n.type === "input_group") {
+    const slots = (n.data as { slots?: InputSlot[] }).slots ?? [];
+    const slot = slots.find((s) => s.id === sourceHandle);
+    if (slot) return slot.kind === "image" ? "image" : "text";
+    return "any";
+  }
+  if (n.type === "fal_model") {
+    const h = sourceHandle ?? "";
+    if (
+      h === "images" ||
+      h === "image" ||
+      h === "out" ||
+      /^(video|videos|audio|media|data)$/i.test(h)
+    ) {
+      return "image";
+    }
+    if (h === "text" || h === "prompt") return "text";
+    return "any";
+  }
+  return "any";
+}
+
+/** What the target port expects; `legacy` = fal "in" merge accepts mixed inputs. */
+function inferTargetWireExpectation(
+  nodes: Node[],
+  target: string,
+  targetHandle: string | null | undefined,
+): "legacy" | WireKind {
+  const n = nodes.find((x) => x.id === target);
+  if (!n) return "any";
+  if (n.type === "output_preview") return "image";
+  if (n.type !== "fal_model") return "any";
+  const h = targetHandle ?? "in";
+  if (h === "in") return "legacy";
+
+  const imageField =
+    /^(image_url|image_urls|model_image|garment_image|mask_url|video_url|audio_url)$/i.test(h) ||
+    /_image$/i.test(h) ||
+    (h.includes("image") && !/prompt/i.test(h));
+
+  if (imageField) return "image";
+
+  if (/^(prompt|negative_prompt|text|system_prompt|category|mode)$/i.test(h)) return "text";
+
+  return "any";
+}
+
+function isWorkflowConnectionValid(nodes: Node[], conn: Connection | Edge): boolean {
+  const source = conn.source;
+  const target = conn.target;
+  if (source === target) return false;
+
+  const sh = conn.sourceHandle ?? null;
+  const th = conn.targetHandle ?? null;
+
+  const srcKind = inferSourceWireKind(nodes, source, sh);
+  const want = inferTargetWireExpectation(nodes, target, th);
+  if (want === "legacy") return true;
+  if (want === "any" || srcKind === "any") return true;
+  if (want === "image" && srcKind === "text") return false;
+  if (want === "text" && srcKind === "image") return false;
+  return true;
+}
 
 function InputPromptNode({ id, data }: NodeProps) {
   const d = data as { prompt?: string };
   return (
-    <div className="min-w-[200px] rounded-lg border border-zinc-600 bg-zinc-900/90 px-3 py-2 shadow-lg">
-      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-emerald-400">Input</div>
+    <div className="min-w-[200px] rounded-lg border border-zinc-600 bg-zinc-900/90 px-3 py-2 pr-6 shadow-lg">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-xs font-medium uppercase tracking-wide text-emerald-400">Text</span>
+        <span className="font-mono text-[10px] text-zinc-500">sourceHandle</span>
+      </div>
       <div className="text-xs text-zinc-400">Node {id.slice(0, 8)}…</div>
       <p className="mt-1 line-clamp-3 text-sm text-zinc-200">{d.prompt || "—"}</p>
-      <Handle type="source" position={Position.Right} className="!h-3 !w-3 !bg-emerald-500" />
+      <div className="relative mt-2 flex min-h-[22px] items-center justify-end gap-2">
+        <span className="font-mono text-[10px] text-emerald-300">prompt</span>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="prompt"
+          className={`${FLOW_HANDLE_BASE} !absolute !right-0 !top-1/2 !-translate-y-1/2 !border-emerald-500/35 !bg-emerald-500`}
+          title='sourceHandle="prompt" — wire to fal target "prompt" (not "in") for that field'
+        />
+      </div>
+    </div>
+  );
+}
+
+function InputImageNode({ id, data }: NodeProps) {
+  const d = data as { imageUrl?: string };
+  const url = (d.imageUrl ?? "").trim();
+  const showPreview = /^https?:\/\//i.test(url) || /^data:image\//i.test(url);
+  return (
+    <div className="min-w-[200px] max-w-[240px] rounded-lg border border-zinc-600 bg-zinc-900/90 px-3 py-2 pr-6 shadow-lg">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-xs font-medium uppercase tracking-wide text-emerald-400">Image</span>
+        <span className="font-mono text-[10px] text-zinc-600">image</span>
+      </div>
+      <div className="text-xs text-zinc-400">Node {id.slice(0, 8)}…</div>
+      {showPreview ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={url}
+          alt=""
+          className="mt-2 max-h-28 w-full rounded border border-zinc-700 object-contain"
+        />
+      ) : (
+        <p className="mt-1 line-clamp-2 text-xs text-zinc-500">{url || "No image URL"}</p>
+      )}
+      <div className="relative mt-2 flex min-h-[22px] items-center justify-end gap-2">
+        <span className="font-mono text-[10px] text-emerald-300">image</span>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="image"
+          className={`${FLOW_HANDLE_BASE} !absolute !right-0 !top-1/2 !-translate-y-1/2 !border-emerald-500/35 !bg-emerald-500`}
+          title='sourceHandle="image" — wire to fal image_url / image_urls / model_image as needed'
+        />
+      </div>
+    </div>
+  );
+}
+
+function InputGroupNode({ id, data }: NodeProps) {
+  const d = data as { slots?: InputSlot[] };
+  const slots = d.slots ?? [];
+  return (
+    <div className="min-w-[260px] max-w-[300px] rounded-lg border border-emerald-700/40 bg-zinc-900/90 px-3 py-2 shadow-lg">
+      <div className="mb-2 text-xs font-medium uppercase tracking-wide text-emerald-400">
+        Request · inputs
+      </div>
+      <div className="text-[10px] text-zinc-500">Node {id.slice(0, 8)}…</div>
+      <div className="mt-2 space-y-0">
+        {slots.length === 0 ? (
+          <p className="text-xs text-zinc-500">Add slots in the sidebar.</p>
+        ) : (
+          slots.map((s) => (
+            <div
+              key={s.id}
+              className="relative border-b border-zinc-800 py-2 pr-5 last:border-b-0"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[11px] font-medium text-emerald-500/90">{s.label || s.kind}</span>
+                <span className="shrink-0 rounded bg-zinc-800 px-1 font-mono text-[9px] uppercase text-zinc-500">
+                  {s.kind}
+                </span>
+              </div>
+              {s.kind === "text" ? (
+                <p className="mt-1 line-clamp-3 text-xs text-zinc-300">{s.value || "—"}</p>
+              ) : s.value.trim() && /^https?:\/\//i.test(s.value) ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={s.value}
+                  alt=""
+                  className="mt-1 max-h-20 w-full rounded border border-zinc-700 object-contain"
+                />
+              ) : (
+                <p className="mt-1 text-[11px] text-zinc-500">No image URL</p>
+              )}
+              <Handle
+                type="source"
+                position={Position.Right}
+                id={s.id}
+                className={`${FLOW_HANDLE_BASE} !top-[calc(50%-2px)] !border-emerald-500/35 !bg-emerald-400`}
+                title={`sourceHandle="${s.id}" (slot "${s.label}")`}
+              />
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OutputPreviewNode({ data }: NodeProps) {
+  const d = data as { title?: string; previewItems?: RunOutputItem[] };
+  const title = d.title ?? "Result";
+  const items = d.previewItems ?? [];
+  const primary = items[0];
+  return (
+    <div className="min-w-[220px] max-w-[min(100vw,320px)] rounded-lg border border-violet-500/45 bg-zinc-900/90 px-3 py-2 shadow-lg">
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="in"
+        className={`${FLOW_HANDLE_BASE} !border-violet-500/40 !bg-violet-500`}
+      />
+      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-violet-400">{title}</div>
+      {primary ? (
+        primary.kind === "video" ? (
+          <video
+            src={primary.url}
+            controls
+            playsInline
+            className="mt-1 max-h-52 w-full rounded border border-zinc-700 bg-black"
+          />
+        ) : primary.kind === "audio" ? (
+          <audio src={primary.url} controls className="mt-1 w-full min-w-[200px]" />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={primary.url}
+            alt=""
+            className="mt-1 max-h-52 w-full rounded border border-zinc-700 object-contain"
+          />
+        )
+      ) : (
+        <p className="text-xs leading-relaxed text-zinc-500">
+          Connect the last step here, then run — image or video appears on the canvas.
+        </p>
+      )}
+      {items.length > 1 ? (
+        <p className="mt-1 text-[10px] text-zinc-600">+{items.length - 1} more in the Run panel</p>
+      ) : null}
+    </div>
+  );
+}
+
+function InputImageNodeSettings({
+  imageUrl,
+  onImageUrlChange,
+}: {
+  imageUrl: string;
+  onImageUrlChange: (v: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function upload(file: File) {
+    setErr(null);
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/fal/storage/upload", { method: "POST", body: fd });
+      const j = (await res.json()) as { url?: string; error?: string };
+      if (!res.ok) {
+        throw new Error(j.error ?? res.statusText);
+      }
+      if (j.url) {
+        onImageUrlChange(j.url);
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const trimmed = imageUrl.trim();
+  const showPreview = /^https?:\/\//i.test(trimmed) || /^data:image\//i.test(trimmed);
+
+  return (
+    <div className="mt-2 space-y-2">
+      <label className="text-xs text-zinc-500">Image URL or upload</label>
+      <input
+        type="url"
+        className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 font-mono text-xs text-zinc-100"
+        placeholder="https://…"
+        value={imageUrl}
+        onChange={(e) => onImageUrlChange(e.target.value)}
+      />
+      <label className="inline-flex cursor-pointer items-center rounded border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700">
+        {busy ? "Uploading…" : "Upload image file"}
+        <input
+          type="file"
+          accept="image/*"
+          className="sr-only"
+          disabled={busy}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (f) void upload(f);
+          }}
+        />
+      </label>
+      {err && <p className="text-xs text-red-400">{err}</p>}
+      {showPreview ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={trimmed} alt="" className="max-h-48 rounded border border-zinc-700" />
+      ) : null}
+      <p className="text-[11px] leading-snug text-zinc-600">
+        Connect this node to a fal model that expects images (e.g.{" "}
+        <span className="font-mono text-zinc-500">fal-ai/nano-banana-2/edit</span>). When{" "}
+        <span className="font-mono text-zinc-500">image_urls</span> is empty in the model, the run uses this
+        image.
+      </p>
+    </div>
+  );
+}
+
+function InputGroupNodeSettings({
+  slots,
+  onSlotsChange,
+}: {
+  slots: InputSlot[];
+  onSlotsChange: (next: InputSlot[]) => void;
+}) {
+  const [busyIdx, setBusyIdx] = useState<number | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function uploadSlot(index: number, file: File) {
+    setErr(null);
+    setBusyIdx(index);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/fal/storage/upload", { method: "POST", body: fd });
+      const j = (await res.json()) as { url?: string; error?: string };
+      if (!res.ok) throw new Error(j.error ?? res.statusText);
+      if (j.url) {
+        const next = [...slots];
+        next[index] = { ...next[index]!, value: j.url };
+        onSlotsChange(next);
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyIdx(null);
+    }
+  }
+
+  function patchSlot(index: number, patch: Partial<InputSlot>) {
+    const next = [...slots];
+    next[index] = { ...next[index]!, ...patch };
+    onSlotsChange(next);
+  }
+
+  function removeSlot(index: number) {
+    onSlotsChange(slots.filter((_, i) => i !== index));
+  }
+
+  return (
+    <div className="mt-2 space-y-3">
+      {err && <p className="text-xs text-red-400">{err}</p>}
+      {slots.map((s, i) => (
+        <div key={s.id} className="rounded border border-zinc-800 bg-zinc-900/50 p-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-[10px] text-zinc-500">Label</label>
+            <input
+              className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-100"
+              value={s.label}
+              onChange={(e) => patchSlot(i, { label: e.target.value })}
+            />
+            <select
+              className="rounded border border-zinc-700 bg-zinc-900 px-1 py-1 text-[11px] text-zinc-200"
+              value={s.kind}
+              onChange={(e) =>
+                patchSlot(i, { kind: e.target.value as "image" | "text", value: "" })
+              }
+            >
+              <option value="image">image</option>
+              <option value="text">text</option>
+            </select>
+            <button
+              type="button"
+              className="text-[11px] text-red-400 hover:underline"
+              onClick={() => removeSlot(i)}
+            >
+              Remove
+            </button>
+          </div>
+          {s.kind === "text" ? (
+            <textarea
+              className="mt-2 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
+              rows={3}
+              value={s.value}
+              onChange={(e) => patchSlot(i, { value: e.target.value })}
+            />
+          ) : (
+            <div className="mt-2 space-y-1">
+              <input
+                type="url"
+                className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-100"
+                placeholder="https://…"
+                value={s.value}
+                onChange={(e) => patchSlot(i, { value: e.target.value })}
+              />
+              <label className="inline-flex cursor-pointer items-center rounded border border-zinc-600 bg-zinc-800 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-700">
+                {busyIdx === i ? "Uploading…" : "Upload"}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="sr-only"
+                  disabled={busyIdx !== null}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    if (f) void uploadSlot(i, f);
+                  }}
+                />
+              </label>
+            </div>
+          )}
+        </div>
+      ))}
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="rounded border border-zinc-600 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-800"
+          onClick={() =>
+            onSlotsChange([
+              ...slots,
+              {
+                id: `slot-${nanoid(6)}`,
+                kind: "image",
+                label: `image_${slots.length + 1}`,
+                value: "",
+              },
+            ])
+          }
+        >
+          + Image slot
+        </button>
+        <button
+          type="button"
+          className="rounded border border-zinc-600 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-800"
+          onClick={() =>
+            onSlotsChange([
+              ...slots,
+              {
+                id: `slot-${nanoid(6)}`,
+                kind: "text",
+                label: `prompt_${slots.length + 1}`,
+                value: "",
+              },
+            ])
+          }
+        >
+          + Text slot
+        </button>
+      </div>
+      <p className="text-[11px] leading-snug text-zinc-600">
+        Each slot has its own handle on the right. Connect one or more into a fal model or chain them
+        like a try-on workflow.
+      </p>
     </div>
   );
 }
 
 function FalModelNode({ id, data }: NodeProps) {
-  const d = data as { prompt?: string; falModelId?: string };
+  const d = data as {
+    falModelId?: string;
+    falInput?: Record<string, unknown>;
+    _inputHandleKeys?: string[];
+    _outputHandleKeys?: string[];
+    _runStepStatus?: string;
+  };
+  const stepStatus = d._runStepStatus;
+  const isRunning = stepStatus === "running";
+  const isQueued = stepStatus === "pending";
+  const preview =
+    typeof d.falInput?.prompt === "string"
+      ? d.falInput.prompt
+      : JSON.stringify(d.falInput ?? {}).slice(0, 120);
+  const inputKeys = d._inputHandleKeys ?? [];
+  const outputKeys =
+    d._outputHandleKeys?.length ? d._outputHandleKeys : [...DEFAULT_OUTPUT_HANDLE_KEYS];
+  const rowClass = "relative flex min-h-[22px] w-full items-center gap-0";
+  const handleOffset = "left-[-1px]";
   return (
-    <div className="min-w-[220px] rounded-lg border border-zinc-600 bg-zinc-900/90 px-3 py-2 shadow-lg">
-      <Handle type="target" position={Position.Left} className="!h-3 !w-3 !bg-amber-500" />
-      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-amber-400">fal</div>
-      <div className="truncate text-xs text-zinc-500">
-        {d.falModelId} · {id.slice(0, 6)}…
+    <div
+      className={`relative min-w-[min(100vw,320px)] max-w-[360px] rounded-lg border bg-zinc-900/90 px-3 py-2 shadow-lg transition-[box-shadow,border-color] duration-300 ${
+        isRunning
+          ? "border-orange-400/95 ring-2 ring-orange-400/75 animate-pulse shadow-[0_0_22px_rgba(251,146,60,0.22)]"
+          : isQueued
+            ? "border-amber-900/80 ring-1 ring-amber-700/40"
+            : "border-zinc-600"
+      }`}
+    >
+      {isRunning ? (
+        <div className="absolute -right-1 -top-2 z-10 rounded-md bg-orange-500 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow-md">
+          Running
+        </div>
+      ) : isQueued ? (
+        <div className="absolute -right-1 -top-2 z-10 rounded-md bg-zinc-700 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-200 shadow-md">
+          Queued
+        </div>
+      ) : null}
+      <div className="mb-2 border-b border-zinc-800 pb-2">
+        <div className="text-xs font-medium uppercase tracking-wide text-amber-400">fal</div>
+        <div className="truncate font-mono text-[10px] leading-snug text-zinc-500">{d.falModelId}</div>
+        <div className="truncate text-[10px] text-zinc-600">node {id.slice(0, 8)}…</div>
       </div>
-      <p className="mt-1 line-clamp-4 text-sm text-zinc-200">{d.prompt || "—"}</p>
-      <Handle type="source" position={Position.Right} className="!h-3 !w-3 !bg-amber-500" />
+
+      <p className="mb-3 line-clamp-3 text-xs text-zinc-300">{preview || "—"}</p>
+
+      <div className="flex gap-2 border-t border-zinc-800 pt-2">
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-zinc-500">
+            Inputs (API field name = wire target)
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <div className={rowClass}>
+              <Handle
+                type="target"
+                position={Position.Left}
+                id="in"
+                className={`${FLOW_HANDLE_BASE} !absolute ${handleOffset} !top-1/2 !-translate-y-1/2 !border-amber-400/50 !bg-amber-400`}
+                title="targetHandle omitted or in: merge upstream text into prompt and URLs into image_url / image_urls"
+              />
+              <span className="ml-4 font-mono text-[10px] leading-tight text-amber-200/90">in</span>
+              <span className="ml-1 text-[9px] text-zinc-500">legacy merge</span>
+            </div>
+            {inputKeys.map((key) => (
+              <div key={key} className={rowClass}>
+                <Handle
+                  type="target"
+                  position={Position.Left}
+                  id={key}
+                  className={`${FLOW_HANDLE_BASE} !absolute ${handleOffset} !top-1/2 !-translate-y-1/2 !border-amber-500/45 !bg-amber-500`}
+                  title={`targetHandle="${key}" → falInput.${key}`}
+                />
+                <span className="ml-4 font-mono text-[10px] leading-tight text-zinc-200">{key}</span>
+              </div>
+            ))}
+            {inputKeys.length === 0 ? (
+              <p className="pl-4 text-[9px] leading-snug text-zinc-600">
+                No OpenAPI input schema yet. Use <span className="font-mono">in</span> or set fields in
+                the sidebar.
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="min-w-0 flex-1 border-l border-zinc-800 pl-2">
+          <div className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-zinc-500">
+            Outputs (source handle)
+          </div>
+          <p className="mb-1.5 text-[8px] leading-snug text-zinc-600">
+            Use <span className="font-mono text-zinc-500">images</span> or{" "}
+            <span className="font-mono text-zinc-500">out</span> for the finished file URLs — not queue
+            API links.
+          </p>
+          <div className="flex flex-col gap-0.5">
+            {outputKeys.map((key) => (
+              <div key={key} className={`${rowClass} justify-end`}>
+                <span className="mr-3 font-mono text-[10px] leading-tight text-zinc-200">{key}</span>
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={key}
+                  className={`${FLOW_HANDLE_BASE} !absolute !right-[-1px] !top-1/2 !-translate-y-1/2 !border-amber-500/45 !bg-amber-500`}
+                  title={`sourceHandle="${key}"` + (key === "out" ? " (full artifact)" : "")}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
 const nodeTypes = {
   input_prompt: InputPromptNode,
+  input_image: InputImageNode,
+  input_group: InputGroupNode,
+  output_preview: OutputPreviewNode,
   fal_model: FalModelNode,
 };
+
+type FalModelHit = {
+  endpoint_id: string;
+  metadata?: { display_name?: string; category?: string; description?: string };
+};
+
+type RunOutputItem = { url: string; kind: "image" | "video" | "audio" | "unknown" };
+
+type WorkflowEventRow = { type?: string; node_id?: string; app_id?: string; message?: string };
+
+function collectWorkflowStreamEvents(steps: { outputsJson?: string | null }[]): WorkflowEventRow[] {
+  const rows: WorkflowEventRow[] = [];
+  for (const s of steps) {
+    if (!s.outputsJson) continue;
+    try {
+      const o = JSON.parse(s.outputsJson) as { workflowEvents?: WorkflowEventRow[] };
+      if (Array.isArray(o.workflowEvents)) {
+        rows.push(...o.workflowEvents);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return rows;
+}
+
+function collectRunOutputs(steps: { outputsJson?: string | null }[]): RunOutputItem[] {
+  const items: RunOutputItem[] = [];
+  const seen = new Set<string>();
+  for (const s of steps) {
+    if (!s.outputsJson) continue;
+    try {
+      const o = JSON.parse(s.outputsJson) as {
+        images?: string[];
+        media?: { url: string; kind: string }[];
+      };
+      if (Array.isArray(o.media)) {
+        for (const m of o.media) {
+          if (m.url && !seen.has(m.url)) {
+            seen.add(m.url);
+            const k = (m.kind as RunOutputItem["kind"]) || "unknown";
+            items.push({ url: m.url, kind: k });
+          }
+        }
+      }
+      if (Array.isArray(o.images)) {
+        for (const u of o.images) {
+          if (u && !seen.has(u)) {
+            seen.add(u);
+            items.push({ url: u, kind: "image" });
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return items;
+}
 
 type Props = {
   workflowId: string;
@@ -72,15 +689,185 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
   const [runError, setRunError] = useState<string | null>(null);
   const [pubSlug, setPubSlug] = useState<string | null>(slug);
   const [pubVis, setPubVis] = useState(visibility);
-  const [outputUrls, setOutputUrls] = useState<string[]>([]);
+  const [runOutputs, setRunOutputs] = useState<RunOutputItem[]>([]);
   const [outputsMissing, setOutputsMissing] = useState(false);
+  const [artifactPreviewByNodeId, setArtifactPreviewByNodeId] = useState<
+    Record<string, RunOutputItem[]>
+  >({});
+  const [workflowStreamEvents, setWorkflowStreamEvents] = useState<WorkflowEventRow[]>([]);
   const [origin, setOrigin] = useState("");
+  /** Per-node run step status while a run is in progress (from GET /api/runs/:id). */
+  const [runStepByNodeId, setRunStepByNodeId] = useState<Record<string, string>>({});
+  const [runStartedAtIso, setRunStartedAtIso] = useState<string | null>(null);
+  const [runClock, setRunClock] = useState(0);
+
+  const [modelQuery, setModelQuery] = useState("");
+  const [modelHits, setModelHits] = useState<FalModelHit[]>([]);
+  const [modelSearchLoading, setModelSearchLoading] = useState(false);
+  const [detailByEndpoint, setDetailByEndpoint] = useState<
+    Record<string, { input: RJSFSchema | null; output: RJSFSchema | null }>
+  >({});
+  const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
+  const detailRequestedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setOrigin(window.location.origin);
   }, []);
 
+  const runInProgress = runStatus === "pending" || runStatus === "running";
+
+  useEffect(() => {
+    if (!runStartedAtIso || !runInProgress) return;
+    const id = window.setInterval(() => setRunClock((c) => c + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [runStartedAtIso, runInProgress]);
+
+  const runElapsedLabel = useMemo(() => {
+    if (!runStartedAtIso || !runInProgress) return null;
+    const ms = Date.now() - new Date(runStartedAtIso).getTime() + runClock * 0;
+    const sec = Math.max(0, Math.floor(ms / 1000));
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return m > 0 ? `${m}m ${s.toString().padStart(2, "0")}s` : `${s}s`;
+  }, [runStartedAtIso, runInProgress, runClock]);
+
+  const falProgress = useMemo(() => {
+    const falIds = nodes.filter((n) => n.type === "fal_model").map((n) => n.id);
+    const total = falIds.length;
+    if (total === 0) return { total: 0, done: 0, runningIds: [] as string[], queuedIds: [] as string[] };
+    const done = falIds.filter((id) => runStepByNodeId[id] === "succeeded").length;
+    const runningIds = falIds.filter((id) => runStepByNodeId[id] === "running");
+    const queuedIds = falIds.filter((id) => runStepByNodeId[id] === "pending");
+    return { total, done, runningIds, queuedIds };
+  }, [nodes, runStepByNodeId]);
+
+  /** Recomputed every render; `runClock` ticks once per second during a run so ETA stays fresh. */
+  let roughEtaSeconds: number | null = null;
+  if (runStartedAtIso && runInProgress && falProgress.total > 0 && falProgress.done >= 1) {
+    const remaining = falProgress.total - falProgress.done;
+    if (remaining > 0) {
+      const elapsedSec = Math.max(
+        1,
+        (Date.now() - new Date(runStartedAtIso).getTime()) / 1000,
+      );
+      roughEtaSeconds = Math.round((elapsedSec / falProgress.done) * remaining);
+    }
+  }
+
+  const activeRunningNodeId = falProgress.runningIds[0] ?? null;
+  const activeRunningNode = activeRunningNodeId
+    ? nodes.find((n) => n.id === activeRunningNodeId)
+    : undefined;
+  const activeRunningModelLabel =
+    activeRunningNode?.type === "fal_model"
+      ? String((activeRunningNode.data as { falModelId?: string }).falModelId ?? "").slice(0, 48)
+      : null;
+
+  const nodesForFlow = useMemo(() => {
+    return nodes.map((n) => {
+      if (n.type === "output_preview") {
+        const items = artifactPreviewByNodeId[n.id];
+        if (!items?.length) return n;
+        return {
+          ...n,
+          data: { ...(n.data as Record<string, unknown>), previewItems: items },
+        };
+      }
+      if (n.type === "fal_model") {
+        const mid = String((n.data as { falModelId?: string }).falModelId ?? "").trim();
+        const detail = mid ? detailByEndpoint[mid] : undefined;
+        const inputKeys = listMappableInputKeysFromSchema(detail?.input ?? null);
+        const outFromSchema = listMappableOutputKeysFromSchema(detail?.output ?? null);
+        const outputKeysFinal =
+          outFromSchema.length > 0
+            ? orderOutputHandleKeys([...new Set([...outFromSchema, "out", "images"])])
+            : [...DEFAULT_OUTPUT_HANDLE_KEYS];
+        const stepSt = runInProgress ? runStepByNodeId[n.id] : undefined;
+        return {
+          ...n,
+          data: {
+            ...(n.data as Record<string, unknown>),
+            _inputHandleKeys: inputKeys,
+            _outputHandleKeys: outputKeysFinal,
+            ...(stepSt ? { _runStepStatus: stepSt } : {}),
+          },
+        };
+      }
+      return n;
+    });
+  }, [nodes, artifactPreviewByNodeId, detailByEndpoint, runInProgress, runStepByNodeId]);
+
   const selectedNode = nodes.find((n) => n.id === selectedId) ?? null;
+
+  const selectedFalModelId =
+    selectedNode?.type === "fal_model"
+      ? String((selectedNode.data as { falModelId?: string }).falModelId ?? "")
+      : "";
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setModelSearchLoading(true);
+      fetch(`/api/fal/models?q=${encodeURIComponent(modelQuery)}&limit=20`)
+        .then((r) => r.json())
+        .then((j: { models?: FalModelHit[] }) => {
+          setModelHits(Array.isArray(j.models) ? j.models : []);
+        })
+        .catch(() => setModelHits([]))
+        .finally(() => setModelSearchLoading(false));
+    }, 280);
+    return () => clearTimeout(t);
+  }, [modelQuery]);
+
+  useEffect(() => {
+    const ids = [
+      ...new Set(
+        nodes
+          .filter((n) => n.type === "fal_model")
+          .map((n) => String((n.data as { falModelId?: string }).falModelId ?? "").trim())
+          .filter(Boolean),
+      ),
+    ];
+    for (const id of ids) {
+      if (detailRequestedRef.current.has(id)) continue;
+      detailRequestedRef.current.add(id);
+      void fetch(`/api/fal/models/detail?endpointId=${encodeURIComponent(id)}`)
+        .then(async (r) => {
+          const j = (await r.json()) as {
+            inputSchema?: RJSFSchema | null;
+            outputSchema?: RJSFSchema | null;
+            error?: string;
+          };
+          if (!r.ok) {
+            setDetailErrors((prev) => ({ ...prev, [id]: j.error ?? r.statusText }));
+            setDetailByEndpoint((prev) => ({ ...prev, [id]: { input: null, output: null } }));
+            return;
+          }
+          setDetailByEndpoint((prev) => ({
+            ...prev,
+            [id]: { input: j.inputSchema ?? null, output: j.outputSchema ?? null },
+          }));
+        })
+        .catch((e) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          setDetailErrors((prev) => ({ ...prev, [id]: msg }));
+          setDetailByEndpoint((prev) => ({ ...prev, [id]: { input: null, output: null } }));
+        });
+    }
+  }, [nodes]);
+
+  const detailSchema =
+    selectedFalModelId && selectedNode?.type === "fal_model"
+      ? detailByEndpoint[selectedFalModelId]?.input ?? null
+      : null;
+  const detailLoading = Boolean(
+    selectedFalModelId &&
+      selectedNode?.type === "fal_model" &&
+      !(selectedFalModelId in detailByEndpoint),
+  );
+  const detailError =
+    selectedFalModelId && selectedNode?.type === "fal_model"
+      ? detailErrors[selectedFalModelId] ?? null
+      : null;
 
   const deleteNodesById = useCallback(
     (ids: Set<string>) => {
@@ -96,6 +883,11 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
     if (!selectedId) return;
     deleteNodesById(new Set([selectedId]));
   }, [selectedId, deleteNodesById]);
+
+  const isValidConnection = useCallback(
+    (connection: Connection | Edge) => isWorkflowConnectionValid(nodes, connection),
+    [nodes],
+  );
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge({ ...params, id: `e-${nanoid(8)}` }, eds)),
@@ -119,7 +911,9 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
     }
   }, [nodes, edges, workflowId, wfTitle]);
 
-  const addNode = (kind: "input_prompt" | "fal_model") => {
+  const addNode = (
+    kind: "input_prompt" | "input_image" | "input_group" | "output_preview" | "fal_model",
+  ) => {
     const id = nanoid(10);
     const y = 40 + nodes.length * 28;
     const base: Node = {
@@ -129,7 +923,37 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
       data:
         kind === "input_prompt"
           ? { prompt: "" }
-          : { prompt: "Describe the image", falModelId: "fal-ai/flux/schnell" },
+          : kind === "input_image"
+            ? { imageUrl: "" }
+            : kind === "input_group"
+              ? {
+                  slots: [
+                    {
+                      id: `slot-${nanoid(6)}`,
+                      kind: "image" as const,
+                      label: "model_image",
+                      value: "",
+                    },
+                    {
+                      id: `slot-${nanoid(6)}`,
+                      kind: "image" as const,
+                      label: "garment_image",
+                      value: "",
+                    },
+                    {
+                      id: `slot-${nanoid(6)}`,
+                      kind: "text" as const,
+                      label: "prompt",
+                      value: "",
+                    },
+                  ],
+                }
+              : kind === "output_preview"
+                ? { title: "Response" }
+                : {
+                    falModelId: "fal-ai/flux/schnell",
+                    falInput: { prompt: "Describe the image", num_images: 1 },
+                  },
     };
     setNodes((nds) => [...nds, base]);
   };
@@ -143,40 +967,47 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
         run: {
           status: string;
           error: string | null;
-          steps?: { outputsJson?: string | null }[];
+          startedAt?: string;
+          steps?: { nodeId: string; status?: string; outputsJson?: string | null }[];
         };
       };
       setRunStatus(data.run.status);
       setRunError(data.run.error);
+      if (data.run.startedAt) setRunStartedAtIso(data.run.startedAt);
+      const steps = data.run.steps ?? [];
+      const stepStatusMap: Record<string, string> = {};
+      for (const s of steps) {
+        if (s.nodeId && s.status) stepStatusMap[s.nodeId] = s.status;
+      }
+      setRunStepByNodeId(stepStatusMap);
+      const byNode: Record<string, RunOutputItem[]> = {};
+      for (const s of steps) {
+        if (s.nodeId && s.outputsJson) {
+          byNode[s.nodeId] = collectRunOutputs([{ outputsJson: s.outputsJson }]);
+        }
+      }
+      setArtifactPreviewByNodeId(byNode);
       if (data.run.status === "succeeded" || data.run.status === "failed") {
         clearInterval(t);
         if (data.run.status === "succeeded") {
-          const collect = (steps: { outputsJson?: string | null }[]) => {
-            const imgs: string[] = [];
-            for (const s of steps) {
-              if (!s.outputsJson) continue;
-              try {
-                const o = JSON.parse(s.outputsJson) as { images?: string[] };
-                if (o.images?.length) imgs.push(...o.images);
-              } catch {
-                /* ignore */
-              }
-            }
-            return imgs;
-          };
-          let imgs = collect(data.run.steps ?? []);
-          if (imgs.length === 0) {
+          let items = collectRunOutputs(steps);
+          let ev = collectWorkflowStreamEvents(steps);
+          if (items.length === 0) {
             const r2 = await fetch(`/api/runs/${runId}`);
             if (r2.ok) {
               const d2 = (await r2.json()) as {
                 run: { steps?: { outputsJson?: string | null }[] };
               };
-              imgs = collect(d2.run.steps ?? []);
+              items = collectRunOutputs(d2.run.steps ?? []);
+              ev = collectWorkflowStreamEvents(d2.run.steps ?? []);
             }
           }
-          setOutputUrls(imgs);
-          setOutputsMissing(imgs.length === 0);
+          setRunOutputs(items);
+          setWorkflowStreamEvents(ev);
+          setOutputsMissing(items.length === 0);
         }
+      } else {
+        setWorkflowStreamEvents(collectWorkflowStreamEvents(steps));
       }
     }, 1500);
     return () => clearInterval(t);
@@ -196,9 +1027,14 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
 
   const runWorkflow = async () => {
     await save();
-    setOutputUrls([]);
+    setRunOutputs([]);
+    setArtifactPreviewByNodeId({});
+    setWorkflowStreamEvents([]);
     setOutputsMissing(false);
     setRunError(null);
+    setRunStepByNodeId({});
+    setRunStartedAtIso(null);
+    setRunClock(0);
     setRunStatus("pending");
     const res = await fetch("/api/runs", {
       method: "POST",
@@ -215,7 +1051,7 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
     setRunStatus("running");
   };
 
-  const updateSelectedData = (patch: Record<string, string>) => {
+  const updateSelectedData = (patch: Record<string, unknown>) => {
     if (!selectedNode) return;
     setNodes((nds) =>
       nds.map((n) =>
@@ -224,15 +1060,29 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
     );
   };
 
+  const setFalInput = (fd: Record<string, unknown>) => {
+    updateSelectedData({ falInput: fd });
+  };
+
+  const falDocsUrl = (id: string) => `https://fal.ai/models/${encodeURIComponent(id)}/api`;
+
+  const useJsonWithoutOpenApi =
+    selectedNode?.type === "fal_model" &&
+    selectedFalModelId.startsWith("workflows/") &&
+    !detailLoading &&
+    (!detailSchema || Boolean(detailError));
+
   return (
     <div className="flex h-[calc(100vh-3.5rem)] flex-col md:flex-row">
       <div className="relative min-h-[360px] flex-1">
         <ReactFlow
-          nodes={nodes}
+          nodes={nodesForFlow}
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          isValidConnection={isValidConnection}
+          connectionRadius={36}
           nodeTypes={nodeTypes}
           deleteKeyCode={["Backspace", "Delete"]}
           onNodeClick={(_, n) => {
@@ -249,8 +1099,11 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
             deleteNodesById(new Set(deleted.map((n) => n.id)));
           }}
           fitView
-          className="bg-zinc-950"
+          className="workflow-flow bg-zinc-950"
           proOptions={{ hideAttribution: true }}
+          defaultEdgeOptions={{
+            style: { stroke: "#71717a", strokeWidth: 1.5 },
+          }}
         >
           <Background gap={20} size={1} color="#333" />
           <MiniMap className="!bg-zinc-900" />
@@ -267,16 +1120,37 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
             </button>
             <button
               type="button"
+              onClick={() => addNode("input_image")}
+              className="rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 ring-1 ring-zinc-600 hover:bg-zinc-700"
+            >
+              + Image input
+            </button>
+            <button
+              type="button"
+              onClick={() => addNode("input_group")}
+              className="rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 ring-1 ring-zinc-600 hover:bg-zinc-700"
+            >
+              + Input group
+            </button>
+            <button
+              type="button"
               onClick={() => addNode("fal_model")}
               className="rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 ring-1 ring-zinc-600 hover:bg-zinc-700"
             >
               + fal model
             </button>
+            <button
+              type="button"
+              onClick={() => addNode("output_preview")}
+              className="rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 ring-1 ring-violet-900/50 hover:bg-zinc-700"
+            >
+              + Result
+            </button>
           </div>
         </div>
       </div>
 
-      <aside className="w-full border-t border-zinc-800 bg-zinc-950 p-4 md:w-80 md:border-l md:border-t-0">
+      <aside className="w-full max-w-xl border-t border-zinc-800 bg-zinc-950 p-4 md:w-[min(100%,28rem)] md:border-l md:border-t-0 md:overflow-y-auto">
         <label className="block text-xs font-medium text-zinc-500">Title</label>
         <input
           className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
@@ -320,31 +1194,97 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
         <div className="mt-6 border-t border-zinc-800 pt-4">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Run</h3>
           <p className="mt-1 text-xs text-zinc-600">
-            The server polls fal when your app is not reachable by webhooks (e.g. localhost).
+            The server polls fal when your app is not reachable by webhooks (e.g. localhost). Watch
+            the canvas: the active fal node pulses orange while that step runs.
           </p>
           {runStatus && (
             <p className="mt-2 text-sm text-zinc-300">
               Status: <span className="text-orange-400">{runStatus}</span>
             </p>
           )}
-          {runError && <p className="mt-1 text-xs text-red-400">{runError}</p>}
+          {runInProgress && runElapsedLabel && (
+            <p className="mt-1 text-xs text-zinc-500">
+              Elapsed: <span className="text-zinc-300">{runElapsedLabel}</span>
+            </p>
+          )}
+          {runInProgress && falProgress.total > 0 && (
+            <p className="mt-1 text-xs text-zinc-500">
+              Model steps:{" "}
+              <span className="text-zinc-300">
+                {falProgress.done} / {falProgress.total} finished
+              </span>
+              {falProgress.runningIds.length > 0 ? (
+                <span className="text-orange-400/90"> · one running</span>
+              ) : falProgress.queuedIds.length > 0 ? (
+                <span className="text-amber-500/80"> · waiting in queue</span>
+              ) : null}
+            </p>
+          )}
+          {runInProgress && activeRunningModelLabel && (
+            <p className="mt-1 text-xs text-zinc-500">
+              Now on:{" "}
+              <span className="break-all font-mono text-[11px] text-orange-300/95">
+                {activeRunningModelLabel}
+              </span>
+            </p>
+          )}
+          {runInProgress && roughEtaSeconds != null && roughEtaSeconds > 0 && (
+            <p className="mt-1 text-[11px] leading-snug text-zinc-600">
+              Rough ETA: ~{roughEtaSeconds < 60 ? `${roughEtaSeconds}s` : `${Math.round(roughEtaSeconds / 60)}m`}{" "}
+              left (average from completed steps; actual time varies).
+            </p>
+          )}
+          {runError && (
+            <p className="mt-1 whitespace-pre-wrap break-words text-xs text-red-400">{runError}</p>
+          )}
           {runStatus === "succeeded" && outputsMissing && (
             <p className="mt-2 text-xs text-amber-500/90">
-              Run finished but no image URLs were stored. Check FAL_KEY, fal logs, and server terminal
+              Run finished but no media URLs were stored. Check FAL_KEY, fal logs, and server terminal
               for errors.
             </p>
           )}
-          {outputUrls.length > 0 && (
+          {workflowStreamEvents.length > 0 && (
+            <div className="mt-3 max-h-40 overflow-y-auto rounded border border-zinc-800 bg-zinc-900/50 p-2 font-mono text-[10px] text-zinc-400">
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                fal workflow stream
+              </div>
+              <ul className="space-y-0.5">
+                {workflowStreamEvents.map((ev, i) => (
+                  <li key={`${ev.node_id ?? ""}-${i}`}>
+                    <span className="text-orange-400/90">{ev.type ?? "?"}</span>
+                    {ev.node_id ? (
+                      <span className="ml-1 text-zinc-500">{ev.node_id}</span>
+                    ) : null}
+                    {ev.message ? (
+                      <span className="ml-1 text-red-400/90">{ev.message}</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {runOutputs.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-2">
-              {outputUrls.map((url) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  key={url}
-                  src={url}
-                  alt="Output"
-                  className="max-h-40 rounded border border-zinc-700"
-                />
-              ))}
+              {runOutputs.map((item) =>
+                item.kind === "video" ? (
+                  <video
+                    key={item.url}
+                    src={item.url}
+                    controls
+                    className="max-h-40 max-w-[200px] rounded border border-zinc-700"
+                  />
+                ) : item.kind === "audio" ? (
+                  <audio key={item.url} src={item.url} controls className="w-full min-w-[200px]" />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={item.url}
+                    src={item.url}
+                    alt="Output"
+                    className="max-h-40 rounded border border-zinc-700"
+                  />
+                ),
+              )}
             </div>
           )}
         </div>
@@ -379,23 +1319,133 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
               />
             </div>
           )}
-          {selectedNode?.type === "fal_model" && (
+          {selectedNode?.type === "input_image" && (
+            <InputImageNodeSettings
+              imageUrl={String((selectedNode.data as { imageUrl?: string }).imageUrl ?? "")}
+              onImageUrlChange={(imageUrl) => updateSelectedData({ imageUrl })}
+            />
+          )}
+          {selectedNode?.type === "input_group" && (
             <div className="mt-2 space-y-2">
-              <label className="text-xs text-zinc-500">Model</label>
-              <select
-                className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
-                value={String((selectedNode.data as { falModelId?: string }).falModelId)}
-                onChange={(e) => updateSelectedData({ falModelId: e.target.value })}
-              >
-                <option value="fal-ai/flux/schnell">fal-ai/flux/schnell</option>
-              </select>
-              <label className="text-xs text-zinc-500">Prompt</label>
-              <textarea
-                className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
-                rows={4}
-                value={String((selectedNode.data as { prompt?: string }).prompt ?? "")}
-                onChange={(e) => updateSelectedData({ prompt: e.target.value })}
+              <label className="text-xs text-zinc-500">Input slots</label>
+              <InputGroupNodeSettings
+                slots={
+                  ((selectedNode.data as { slots?: InputSlot[] }).slots ?? []) as InputSlot[]
+                }
+                onSlotsChange={(slots) => updateSelectedData({ slots })}
               />
+            </div>
+          )}
+          {selectedNode?.type === "output_preview" && (
+            <div className="mt-2 space-y-2">
+              <label className="text-xs text-zinc-500">Title</label>
+              <input
+                className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
+                value={String((selectedNode.data as { title?: string }).title ?? "Result")}
+                onChange={(e) => updateSelectedData({ title: e.target.value })}
+              />
+              <p className="text-[11px] leading-snug text-zinc-600">
+                Connect the upstream node that produces the final image or video. After a successful
+                run, the media appears inside this node on the canvas.
+              </p>
+            </div>
+          )}
+          {selectedNode?.type === "fal_model" && (
+            <div className="mt-2 space-y-3">
+              <div>
+                <label className="text-xs text-zinc-500">Endpoint id</label>
+                <input
+                  className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 font-mono text-xs text-zinc-100"
+                  value={selectedFalModelId}
+                  onChange={(e) => updateSelectedData({ falModelId: e.target.value })}
+                />
+                {selectedFalModelId ? (
+                  <a
+                    href={falDocsUrl(selectedFalModelId)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-block text-xs text-orange-400 hover:underline"
+                  >
+                    Open API docs on fal.ai
+                  </a>
+                ) : null}
+              </div>
+
+              <div>
+                <label className="text-xs text-zinc-500">fal workflow templates</label>
+                <p className="mt-0.5 text-[10px] text-zinc-600">
+                  Hosted <span className="font-mono">workflows/…</span> pipelines use{" "}
+                  <span className="font-mono">fal.stream</span> (see docs). Connect prompt + image
+                  inputs like single-model nodes.
+                </p>
+                <ul className="mt-1 max-h-28 space-y-1 overflow-y-auto rounded border border-zinc-800">
+                  {FAL_WORKFLOW_TEMPLATES.map((tpl) => (
+                    <li key={tpl.id}>
+                      <button
+                        type="button"
+                        className="w-full px-2 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800"
+                        onClick={() => {
+                          updateSelectedData({
+                            falModelId: tpl.id,
+                            falInput: { ...tpl.defaultFalInput },
+                          });
+                        }}
+                      >
+                        <span className="font-mono text-cyan-400/90">{tpl.title}</span>
+                        <span className="ml-1 block text-[10px] text-zinc-500">{tpl.description}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div>
+                <label className="text-xs text-zinc-500">Search models</label>
+                <input
+                  className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
+                  placeholder="Type to search…"
+                  value={modelQuery}
+                  onChange={(e) => setModelQuery(e.target.value)}
+                />
+                <p className="mt-0.5 text-[10px] text-zinc-600">
+                  {modelSearchLoading ? "Loading…" : `${modelHits.length} results`}
+                </p>
+                <ul className="mt-1 max-h-36 overflow-y-auto rounded border border-zinc-800">
+                  {modelHits.map((m) => (
+                    <li key={m.endpoint_id}>
+                      <button
+                        type="button"
+                        className="w-full px-2 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800"
+                        onClick={() => {
+                          updateSelectedData({ falModelId: m.endpoint_id, falInput: {} });
+                        }}
+                      >
+                        <span className="font-mono text-orange-300">{m.endpoint_id}</span>
+                        {m.metadata?.display_name ? (
+                          <span className="ml-1 text-zinc-500">{m.metadata.display_name}</span>
+                        ) : null}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {detailLoading && <p className="text-xs text-zinc-500">Loading input schema…</p>}
+              {detailError && <p className="text-xs text-red-400">{detailError}</p>}
+
+              <div>
+                <label className="text-xs text-zinc-500">Model input</label>
+                <FalModelForm
+                  key={`${selectedId}-${selectedFalModelId}`}
+                  schema={detailSchema}
+                  formData={
+                    ((selectedNode.data as { falInput?: Record<string, unknown> }).falInput ??
+                      {}) as Record<string, unknown>
+                  }
+                  onChange={setFalInput}
+                  noSchemaFallback={useJsonWithoutOpenApi ? "json" : "message"}
+                />
+              </div>
             </div>
           )}
         </div>

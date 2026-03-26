@@ -29,39 +29,39 @@ export default function LoginPage() {
 
   return (
     <div className="mx-auto max-w-sm px-6 py-20">
-      <h1 className="text-2xl font-semibold text-zinc-50">Log in</h1>
+      <h1 className="text-2xl font-semibold text-zinc-900">Log in</h1>
       <form onSubmit={onSubmit} className="mt-8 flex flex-col gap-4">
         <div>
-          <label className="text-xs text-zinc-500">Email</label>
+          <label className="text-xs font-medium text-zinc-700">Email</label>
           <input
             type="email"
             required
-            className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+            className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm placeholder:text-zinc-400 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/25"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
         </div>
         <div>
-          <label className="text-xs text-zinc-500">Password</label>
+          <label className="text-xs font-medium text-zinc-700">Password</label>
           <input
             type="password"
             required
-            className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+            className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/25"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
         </div>
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p className="text-sm text-red-600">{error}</p>}
         <button
           type="submit"
-          className="rounded-lg bg-orange-500 py-2.5 font-medium text-white hover:bg-orange-400"
+          className="rounded-lg bg-orange-600 py-2.5 font-medium text-white transition-colors duration-300 ease-out hover:bg-orange-500"
         >
           Continue
         </button>
       </form>
-      <p className="mt-6 text-sm text-zinc-500">
+      <p className="mt-6 text-sm text-zinc-600">
         No account?{" "}
-        <Link href="/register" className="text-orange-400 hover:underline">
+        <Link href="/register" className="font-medium text-orange-700 underline-offset-4 hover:underline">
           Sign up
         </Link>
       </p>

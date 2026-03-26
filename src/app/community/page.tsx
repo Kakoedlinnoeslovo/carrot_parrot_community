@@ -30,8 +30,8 @@ export default async function CommunityPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-12">
-      <h1 className="text-2xl font-semibold text-zinc-50">Community</h1>
-      <p className="mt-2 text-sm text-zinc-500">
+      <h1 className="text-2xl font-semibold text-zinc-900">Community</h1>
+      <p className="mt-2 text-sm text-zinc-600">
         Published workflows — open a style, like it, or remix into your studio.
       </p>
 
@@ -39,14 +39,14 @@ export default async function CommunityPage() {
         {workflows.map((w) => (
           <li
             key={w.id}
-            className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 hover:border-zinc-700"
+            className="rounded-xl border border-zinc-200 bg-white p-4 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.1)] transition-[border-color,box-shadow] duration-300 ease-out hover:border-zinc-300 hover:shadow-[0_16px_48px_-20px_rgba(0,0,0,0.12)]"
           >
             <Link href={`/w/${w.slug}`} className="block">
-              <h2 className="font-medium text-zinc-100">{w.title ?? "Untitled"}</h2>
-              <p className="mt-1 line-clamp-2 text-sm text-zinc-500">
+              <h2 className="font-semibold text-zinc-900">{w.title ?? "Untitled"}</h2>
+              <p className="mt-1 line-clamp-2 text-sm text-zinc-600">
                 {w.description ?? "No description"}
               </p>
-              <p className="mt-3 text-xs text-zinc-600">
+              <p className="mt-3 text-xs text-zinc-500">
                 {w.user.name ?? w.user.email?.split("@")[0] ?? "Creator"}
               </p>
             </Link>
@@ -62,7 +62,7 @@ export default async function CommunityPage() {
       </ul>
 
       {workflows.length === 0 && (
-        <p className="mt-12 text-center text-zinc-500">
+        <p className="mt-12 text-center text-zinc-600">
           Nothing published yet. Publish from the studio.
         </p>
       )}

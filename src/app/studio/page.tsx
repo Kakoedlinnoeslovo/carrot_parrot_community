@@ -22,31 +22,31 @@ export default async function StudioIndexPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-12">
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold text-zinc-50">Your workflows</h1>
+        <h1 className="text-2xl font-semibold text-zinc-900">Your workflows</h1>
         <form action={createWorkflowAction}>
           <button
             type="submit"
-            className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-400"
+            className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white transition-colors duration-300 ease-out hover:bg-orange-500"
           >
             New workflow
           </button>
         </form>
       </div>
-      <p className="mt-2 text-sm text-zinc-500">
+      <p className="mt-2 text-sm text-zinc-600">
         Open the canvas, connect nodes, and run with your fal.ai key on the server.
       </p>
 
-      <ul className="mt-10 divide-y divide-zinc-800 rounded-lg border border-zinc-800">
+      <ul className="mt-10 divide-y divide-zinc-200 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_12px_40px_-24px_rgba(0,0,0,0.1)]">
         {workflows.length === 0 && (
-          <li className="px-4 py-8 text-center text-zinc-500">No workflows yet. Create one.</li>
+          <li className="px-4 py-8 text-center text-zinc-600">No workflows yet. Create one.</li>
         )}
         {workflows.map((w) => (
           <li key={w.id}>
             <Link
               href={`/studio/${w.id}`}
-              className="flex items-center justify-between px-4 py-4 hover:bg-zinc-900/80"
+              className="flex items-center justify-between px-4 py-4 transition-colors duration-300 ease-out hover:bg-zinc-50"
             >
-              <span className="font-medium text-zinc-200">{w.title ?? "Untitled"}</span>
+              <span className="font-medium text-zinc-900">{w.title ?? "Untitled"}</span>
               <span className="text-xs text-zinc-500">
                 {w.visibility === "published" ? "Published" : "Private"} ·{" "}
                 {w.updatedAt.toLocaleDateString()}

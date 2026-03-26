@@ -21,7 +21,7 @@ export function RemixButton({ workflowId }: { workflowId: string }) {
       type="button"
       disabled={pending}
       onClick={() => void remix()}
-      className="rounded-md bg-zinc-100 px-3 py-1.5 text-sm font-medium text-zinc-900 hover:bg-white disabled:opacity-50"
+      className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-900 transition-colors duration-300 ease-out hover:bg-zinc-50 disabled:opacity-50"
     >
       {pending ? "…" : "Remix"}
     </button>

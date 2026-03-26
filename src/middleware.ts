@@ -10,7 +10,9 @@ export default auth((req) => {
   }
 
   if (
-    (pathname.startsWith("/api/workflows") || pathname.startsWith("/api/runs")) &&
+    (pathname.startsWith("/api/workflows") ||
+      pathname.startsWith("/api/runs") ||
+      pathname.startsWith("/api/fal/storage")) &&
     !loggedIn
   ) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -20,5 +22,10 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/studio/:path*", "/api/workflows/:path*", "/api/runs/:path*"],
+  matcher: [
+    "/studio/:path*",
+    "/api/workflows/:path*",
+    "/api/runs/:path*",
+    "/api/fal/storage/:path*",
+  ],
 };

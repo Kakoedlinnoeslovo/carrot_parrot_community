@@ -30,7 +30,19 @@ export async function POST(req: Request) {
       },
     });
     return NextResponse.json({ ok: true });
-  } catch {
-    return NextResponse.json({ error: "Registration failed" }, { status: 500 });
+  } catch (e) {
+    console.error("[register]", e);
+    const message = e instanceof Error ? e.message : "Registration failed";
+    return NextResponse.json(
+      {
+        error:
+          process.env.NODE_ENV === "development"
+            ? message
+            : "Registration failed",
+      },
+      { status: 500 },
+    );
   }
 }
+
+export const runtime = "nodejs";

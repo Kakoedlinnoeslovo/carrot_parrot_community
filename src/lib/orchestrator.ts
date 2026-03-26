@@ -1,29 +1,142 @@
-import type { WorkflowGraph, WorkflowNode } from "@/lib/workflow-graph";
+import type { WorkflowGraph } from "@/lib/workflow-graph";
 import { parseWorkflowGraph } from "@/lib/workflow-graph";
 import { prisma } from "@/lib/db";
 import { getAppUrl } from "@/lib/env";
-import { fal } from "@/lib/fal-client";
+import { fal, formatFalClientError } from "@/lib/fal-client";
+import { isFalEndpointIdAllowed } from "@/lib/fal-model-policy";
+import { isFalHostedWorkflowEndpoint, runFalHostedWorkflowStream } from "@/lib/fal-hosted-workflow";
+import {
+  mergeFalInput,
+  sanitizeFalInput,
+  type MergeArtifact,
+} from "@/lib/fal-merge-input";
+import { canReuseFalStepFromPrevious } from "@/lib/fal-step-reuse";
+import type { RunStep as PrismaRunStep } from "@prisma/client";
+import {
+  type Artifact,
+  type MediaItem,
+  parseArtifactJson,
+} from "@/lib/artifact-json";
 
-type Artifact = { text?: string; images: string[] };
+export type { Artifact, MediaItem } from "@/lib/artifact-json";
 
-/** Pull image URLs from fal model output (queue result or webhook payload). */
-export function extractImageUrlsFromFalData(data: unknown): string[] {
-  if (data == null || typeof data !== "object") return [];
-  const o = data as Record<string, unknown>;
-  const images = o.images;
-  if (!Array.isArray(images)) return [];
-  const urls: string[] = [];
-  for (const item of images) {
-    if (
-      item &&
-      typeof item === "object" &&
-      "url" in item &&
-      typeof (item as { url: unknown }).url === "string"
-    ) {
-      urls.push((item as { url: string }).url);
+/** Pull media URLs from fal model output (queue result or webhook payload). */
+export function extractMediaFromFalData(data: unknown): MediaItem[] {
+  const out: MediaItem[] = [];
+  const seen = new Set<string>();
+
+  function addUrl(url: string, kind: MediaItem["kind"]) {
+    if (!url.startsWith("http") || seen.has(url)) return;
+    seen.add(url);
+    out.push({ url, kind });
+  }
+
+  function guessKindFromUrl(url: string): MediaItem["kind"] {
+    const u = url.split("?")[0]?.toLowerCase() ?? "";
+    if (/\.(mp4|webm|mov|m4v)(\?|$)/.test(u)) return "video";
+    if (/\.(mp3|wav|m4a|aac|ogg)(\?|$)/.test(u)) return "audio";
+    if (/\.(png|jpe?g|webp|gif)(\?|$)/.test(u)) return "image";
+    return "unknown";
+  }
+
+  function walk(v: unknown, depth: number) {
+    if (depth > 14) return;
+    if (v == null) return;
+    if (typeof v === "string") {
+      if (/^https?:\/\//.test(v)) {
+        addUrl(v, guessKindFromUrl(v));
+      }
+      return;
+    }
+    if (Array.isArray(v)) {
+      for (const x of v) walk(x, depth + 1);
+      return;
+    }
+    if (typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      if (typeof o.url === "string" && /^https?:\/\//.test(o.url)) {
+        const ct = typeof o.content_type === "string" ? o.content_type : "";
+        let kind: MediaItem["kind"] = guessKindFromUrl(o.url);
+        if (ct.startsWith("video/")) kind = "video";
+        else if (ct.startsWith("audio/")) kind = "audio";
+        else if (ct.startsWith("image/")) kind = "image";
+        addUrl(o.url, kind);
+      }
+      for (const k of Object.keys(o)) {
+        walk(o[k], depth + 1);
+      }
     }
   }
-  return urls;
+
+  walk(data, 0);
+  return out;
+}
+
+/** Legacy helper: image file URLs only. */
+export function extractImageUrlsFromFalData(data: unknown): string[] {
+  return extractMediaFromFalData(data)
+    .filter((m) => m.kind === "image" || m.kind === "unknown")
+    .map((m) => m.url);
+}
+
+async function runHostedWorkflowStep(
+  runId: string,
+  stepId: string,
+  endpointId: string,
+  mergedInput: Record<string, unknown>,
+) {
+  const existing = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
+  if (!existing || existing.status !== "running") return;
+
+  const result = await runFalHostedWorkflowStream(endpointId, mergedInput);
+
+  const step = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
+  if (!step || step.status === "succeeded") return;
+
+  if (!result.ok) {
+    await prisma.runStep.update({
+      where: { id: stepId },
+      data: { status: "failed", error: result.error },
+    });
+    await prisma.run.update({
+      where: { id: runId },
+      data: { status: "failed", finishedAt: new Date(), error: result.error },
+    });
+    return;
+  }
+
+  const media = extractMediaFromFalData(result.finalOutput);
+  const images = media.filter((m) => m.kind === "image" || m.kind === "unknown").map((m) => m.url);
+
+  if (media.length === 0) {
+    const err = "Workflow finished but no media URLs were found in the output.";
+    await prisma.runStep.update({
+      where: { id: stepId },
+      data: { status: "failed", error: err },
+    });
+    await prisma.run.update({
+      where: { id: runId },
+      data: { status: "failed", finishedAt: new Date(), error: err },
+    });
+    return;
+  }
+
+  const workflowEvents = result.events.slice(-48);
+
+  await prisma.runStep.update({
+    where: { id: stepId },
+    data: {
+      status: "succeeded",
+      outputsJson: JSON.stringify({
+        text: undefined,
+        images,
+        media,
+        workflowEvents,
+      } satisfies Artifact),
+    },
+  });
+
+  await continueRunAfterFalOutput(runId);
 }
 
 async function continueRunAfterFalOutput(runId: string) {
@@ -34,13 +147,53 @@ async function continueRunAfterFalOutput(runId: string) {
   if (!run) return;
   const graph = parseWorkflowGraph(run.workflow.graphJson);
   await scheduleReadyFalSteps(runId, graph);
+  await schedulePassthroughSteps(runId, graph);
   await finalizeRunIfDone(runId);
 }
 
-/**
- * fal cannot POST to localhost — webhooks only work with a public URL.
- * Poll the queue until the request completes, then persist outputs (idempotent with webhooks).
- */
+/** Resolves `output_preview` nodes by copying upstream artifacts (no fal call). */
+async function schedulePassthroughSteps(runId: string, graph: WorkflowGraph) {
+  const steps = await prisma.runStep.findMany({ where: { runId } });
+  const byNode = Object.fromEntries(steps.map((s) => [s.nodeId, s]));
+
+  for (const node of graph.nodes) {
+    if (node.type !== "output_preview") continue;
+    const step = byNode[node.id];
+    if (!step || step.status !== "pending") continue;
+
+    const preds = predecessors(graph, node.id);
+    if (preds.length === 0) {
+      await prisma.runStep.update({
+        where: { id: step.id },
+        data: {
+          status: "succeeded",
+          inputsJson: JSON.stringify({}),
+          outputsJson: JSON.stringify({
+            text: undefined,
+            images: [],
+            media: [],
+          } satisfies Artifact),
+        },
+      });
+      continue;
+    }
+
+    const predOk = preds.every((pid) => byNode[pid]?.status === "succeeded");
+    if (!predOk) continue;
+
+    const first = preds[0]!;
+    const upstream = byNode[first]?.outputsJson ?? null;
+    await prisma.runStep.update({
+      where: { id: step.id },
+      data: {
+        status: "succeeded",
+        inputsJson: JSON.stringify({ fromNodeId: first }),
+        outputsJson: upstream ?? JSON.stringify({ text: undefined, images: [], media: [] } satisfies Artifact),
+      },
+    });
+  }
+}
+
 async function pollFalUntilComplete(
   runId: string,
   stepId: string,
@@ -53,7 +206,8 @@ async function pollFalUntilComplete(
   try {
     await fal.queue.subscribeToStatus(endpointId, { requestId });
     const res = await fal.queue.result(endpointId, { requestId });
-    const urls = extractImageUrlsFromFalData(res.data);
+    const media = extractMediaFromFalData(res.data);
+    const images = media.filter((m) => m.kind === "image" || m.kind === "unknown").map((m) => m.url);
 
     const step = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
     if (!step || step.status === "succeeded") {
@@ -66,14 +220,15 @@ async function pollFalUntilComplete(
         status: "succeeded",
         outputsJson: JSON.stringify({
           text: undefined,
-          images: urls,
+          images,
+          media,
         } satisfies Artifact),
       },
     });
 
     await continueRunAfterFalOutput(runId);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = formatFalClientError(e);
     const step = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
     if (step?.status === "succeeded") {
       return;
@@ -89,29 +244,50 @@ async function pollFalUntilComplete(
   }
 }
 
-function parseArtifacts(json: string | null | undefined): Artifact {
-  if (!json) return { images: [] };
-  try {
-    const o = JSON.parse(json) as { text?: string; images?: string[] };
-    return { text: o.text, images: Array.isArray(o.images) ? o.images : [] };
-  } catch {
-    return { images: [] };
-  }
-}
-
 function predecessors(graph: WorkflowGraph, nodeId: string): string[] {
   return graph.edges.filter((e) => e.target === nodeId).map((e) => e.source);
 }
 
-function buildMergedPrompt(node: Extract<WorkflowNode, { type: "fal_model" }>, parentArtifacts: Artifact[]): string {
-  let p = node.data.prompt;
-  for (const a of parentArtifacts) {
-    if (a.text) p = `${a.text}\n${p}`;
-    if (a.images.length) {
-      p += `\n(Reference images: ${a.images.join(", ")})`;
-    }
+/**
+ * Steps from a prior succeeded run (same workflow), keyed by nodeId, for reuse when inputs match.
+ */
+/** Exported for tests: prior-run steps used to skip unchanged fal_model nodes. */
+export async function loadReuseReferenceStepsByNodeId(
+  runId: string,
+): Promise<Record<string, PrismaRunStep> | null> {
+  const run = await prisma.run.findUnique({ where: { id: runId } });
+  if (!run || run.skipStepReuse) return null;
+
+  let refRunId: string | null = run.reuseReferenceRunId;
+
+  if (refRunId) {
+    const ref = await prisma.run.findFirst({
+      where: {
+        id: refRunId,
+        workflowId: run.workflowId,
+        userId: run.userId,
+        status: "succeeded",
+      },
+    });
+    if (!ref) return null;
+    refRunId = ref.id;
+  } else {
+    const latest = await prisma.run.findFirst({
+      where: {
+        workflowId: run.workflowId,
+        userId: run.userId,
+        status: "succeeded",
+        id: { not: runId },
+      },
+      orderBy: { finishedAt: "desc" },
+    });
+    refRunId = latest?.id ?? null;
   }
-  return p.trim();
+
+  if (!refRunId) return null;
+
+  const refSteps = await prisma.runStep.findMany({ where: { runId: refRunId } });
+  return Object.fromEntries(refSteps.map((s) => [s.nodeId, s]));
 }
 
 export async function processRun(runId: string) {
@@ -138,13 +314,65 @@ export async function processRun(runId: string) {
         },
       });
     }
+    if (node.type === "input_image") {
+      const raw = (node.data.imageUrl ?? "").trim();
+      const ok = /^https?:\/\//i.test(raw) || /^data:image\//i.test(raw);
+      const images = ok && raw ? [raw] : [];
+      const media: MediaItem[] = ok && raw ? [{ url: raw, kind: "image" }] : [];
+      await prisma.runStep.updateMany({
+        where: { runId, nodeId: node.id, status: "pending" },
+        data: {
+          status: "succeeded",
+          inputsJson: JSON.stringify({}),
+          outputsJson: JSON.stringify({
+            text: undefined,
+            images,
+            media,
+          } satisfies Artifact),
+        },
+      });
+    }
+    if (node.type === "input_group") {
+      const slots = node.data.slots ?? [];
+      const images: string[] = [];
+      const media: MediaItem[] = [];
+      const textParts: string[] = [];
+      for (const s of slots) {
+        if (s.kind === "text") {
+          const t = (s.value ?? "").trim();
+          if (t) textParts.push(t);
+        } else {
+          const raw = (s.value ?? "").trim();
+          const ok = /^https?:\/\//i.test(raw) || /^data:image\//i.test(raw);
+          if (ok && raw) {
+            images.push(raw);
+            media.push({ url: raw, kind: "image" });
+          }
+        }
+      }
+      const text = textParts.join("\n\n");
+      await prisma.runStep.updateMany({
+        where: { runId, nodeId: node.id, status: "pending" },
+        data: {
+          status: "succeeded",
+          inputsJson: JSON.stringify({}),
+          outputsJson: JSON.stringify({
+            text: text || undefined,
+            images,
+            media,
+          } satisfies Artifact),
+        },
+      });
+    }
   }
 
+  await schedulePassthroughSteps(runId, graph);
   await scheduleReadyFalSteps(runId, graph);
   await finalizeRunIfDone(runId);
 }
 
-async function scheduleReadyFalSteps(runId: string, graph: WorkflowGraph) {
+/** Exported for tests; also used by `processRun` and `continueRunAfterFalOutput`. */
+export async function scheduleReadyFalSteps(runId: string, graph: WorkflowGraph) {
   if (!process.env.FAL_KEY) {
     const needsFal = graph.nodes.some((n) => n.type === "fal_model");
     if (needsFal) {
@@ -156,7 +384,84 @@ async function scheduleReadyFalSteps(runId: string, graph: WorkflowGraph) {
     return;
   }
 
-  const steps = await prisma.runStep.findMany({ where: { runId } });
+  const reuseMap = await loadReuseReferenceStepsByNodeId(runId);
+  let steps = await prisma.runStep.findMany({ where: { runId } });
+
+  if (reuseMap) {
+    while (true) {
+      const byNode = Object.fromEntries(steps.map((s) => [s.nodeId, s]));
+      let anyReuse = false;
+
+      for (const node of graph.nodes) {
+        if (node.type !== "fal_model") continue;
+        const step = byNode[node.id];
+        if (!step || step.status !== "pending") continue;
+
+        const preds = predecessors(graph, node.id);
+        const predOk =
+          preds.length === 0 ||
+          preds.every((pid) => byNode[pid]?.status === "succeeded");
+        if (!predOk) continue;
+
+        if (!isFalEndpointIdAllowed(node.data.falModelId)) {
+          await prisma.runStep.update({
+            where: { id: step.id },
+            data: {
+              status: "failed",
+              error: "Model is not allowed by server policy (FAL_MODEL_ALLOWLIST / FAL_MODEL_DENYLIST).",
+            },
+          });
+          await prisma.run.update({
+            where: { id: runId },
+            data: { status: "failed", finishedAt: new Date(), error: "Blocked model endpoint" },
+          });
+          return;
+        }
+
+        const artifactByNodeId: Record<string, MergeArtifact | undefined> = Object.fromEntries(
+          steps.map((s) => [s.nodeId, parseArtifactJson(s.outputsJson) as MergeArtifact]),
+        );
+        const mergedInput = sanitizeFalInput(mergeFalInput(node, graph, artifactByNodeId));
+        const payload = {
+          falModelId: node.data.falModelId,
+          falInput: mergedInput,
+        };
+        const inputsJson = JSON.stringify(payload);
+
+        const prev = reuseMap[node.id];
+        if (canReuseFalStepFromPrevious(prev, payload)) {
+          await prisma.runStep.update({
+            where: { id: step.id },
+            data: {
+              status: "succeeded",
+              inputsJson,
+              outputsJson: prev!.outputsJson,
+              error: null,
+            },
+          });
+          const i = steps.findIndex((s) => s.id === step.id);
+          if (i >= 0) {
+            steps[i] = {
+              ...steps[i],
+              status: "succeeded",
+              inputsJson,
+              outputsJson: prev!.outputsJson,
+              error: null,
+            };
+          }
+          anyReuse = true;
+        }
+      }
+
+      if (!anyReuse) break;
+
+      await schedulePassthroughSteps(runId, graph);
+      await finalizeRunIfDone(runId);
+      steps = await prisma.runStep.findMany({ where: { runId } });
+    }
+  }
+
+  steps = await prisma.runStep.findMany({ where: { runId } });
   const byNode = Object.fromEntries(steps.map((s) => [s.nodeId, s]));
 
   for (const node of graph.nodes) {
@@ -165,23 +470,44 @@ async function scheduleReadyFalSteps(runId: string, graph: WorkflowGraph) {
     if (!step || step.status !== "pending") continue;
 
     const preds = predecessors(graph, node.id);
-    const predArtifacts = preds.map((pid) => {
-      const sj = byNode[pid]?.outputsJson;
-      return parseArtifacts(sj);
-    });
-
     const predOk =
       preds.length === 0 ||
       preds.every((pid) => byNode[pid]?.status === "succeeded");
     if (!predOk) continue;
 
-    const prompt = buildMergedPrompt(node, predArtifacts);
-    const inputsJson = JSON.stringify({ prompt, falModelId: node.data.falModelId });
+    if (!isFalEndpointIdAllowed(node.data.falModelId)) {
+      await prisma.runStep.update({
+        where: { id: step.id },
+        data: {
+          status: "failed",
+          error: "Model is not allowed by server policy (FAL_MODEL_ALLOWLIST / FAL_MODEL_DENYLIST).",
+        },
+      });
+      await prisma.run.update({
+        where: { id: runId },
+        data: { status: "failed", finishedAt: new Date(), error: "Blocked model endpoint" },
+      });
+      return;
+    }
+
+    const artifactByNodeId: Record<string, MergeArtifact | undefined> = Object.fromEntries(
+      steps.map((s) => [s.nodeId, parseArtifactJson(s.outputsJson) as MergeArtifact]),
+    );
+    const mergedInput = sanitizeFalInput(mergeFalInput(node, graph, artifactByNodeId));
+    const inputsJson = JSON.stringify({
+      falModelId: node.data.falModelId,
+      falInput: mergedInput,
+    });
 
     await prisma.runStep.update({
       where: { id: step.id },
       data: { status: "running", inputsJson },
     });
+
+    if (isFalHostedWorkflowEndpoint(node.data.falModelId)) {
+      void runHostedWorkflowStep(runId, step.id, node.data.falModelId, mergedInput);
+      continue;
+    }
 
     const webhookUrl = `${getAppUrl()}/api/webhooks/fal?runId=${encodeURIComponent(runId)}&stepId=${encodeURIComponent(
       step.id,
@@ -189,7 +515,7 @@ async function scheduleReadyFalSteps(runId: string, graph: WorkflowGraph) {
 
     try {
       const queued = await fal.queue.submit(node.data.falModelId, {
-        input: { prompt, num_images: 1 },
+        input: mergedInput,
         webhookUrl,
       });
       await prisma.runStep.update({
@@ -199,7 +525,7 @@ async function scheduleReadyFalSteps(runId: string, graph: WorkflowGraph) {
 
       void pollFalUntilComplete(runId, step.id, node.data.falModelId, queued.request_id);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = formatFalClientError(e);
       await prisma.runStep.update({
         where: { id: step.id },
         data: { status: "failed", error: msg },
@@ -274,25 +600,27 @@ export async function handleFalWebhook(runId: string, stepId: string, body: unkn
     return;
   }
 
-  let urls: string[] = [];
+  let payload: unknown = null;
   if (b?.status === "OK" && b.payload != null) {
-    urls = extractImageUrlsFromFalData(b.payload);
+    payload = b.payload;
   } else if (b?.payload != null) {
-    urls = extractImageUrlsFromFalData(b.payload);
-  }
-  if (urls.length === 0) {
-    urls = extractImageUrlsFromFalData(body);
+    payload = b.payload;
+  } else {
+    payload = body;
   }
 
-  if (urls.length === 0 && b?.status !== "OK") {
+  const media = extractMediaFromFalData(payload);
+  const images = media.filter((m) => m.kind === "image" || m.kind === "unknown").map((m) => m.url);
+
+  if (media.length === 0 && b?.status !== "OK") {
     if (process.env.NODE_ENV === "development") {
       console.warn("[fal webhook] Unrecognized body; keys:", body && typeof body === "object" ? Object.keys(body) : []);
     }
     await prisma.runStep.update({
       where: { id: stepId },
-      data: { status: "failed", error: "Unexpected webhook payload (no images)" },
+      data: { status: "failed", error: "Unexpected webhook payload (no media URLs)" },
     });
-    await failRun(runId, "Unexpected webhook payload (no images)");
+    await failRun(runId, "Unexpected webhook payload (no media URLs)");
     return;
   }
 
@@ -302,7 +630,8 @@ export async function handleFalWebhook(runId: string, stepId: string, body: unkn
       status: "succeeded",
       outputsJson: JSON.stringify({
         text: undefined,
-        images: urls,
+        images,
+        media,
       } satisfies Artifact),
     },
   });

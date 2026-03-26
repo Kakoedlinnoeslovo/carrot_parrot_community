@@ -1,13 +1,22 @@
 import { NextResponse } from "next/server";
-import { ALLOWED_FAL_MODELS } from "@/lib/workflow-graph";
+import { listFalModels } from "@/lib/fal-platform";
+import { isFalEndpointIdAllowed } from "@/lib/fal-model-policy";
 
-/** Curated node catalog for the editor (server-driven). */
+/** Back-compat: thin proxy to fal Platform API (prefer GET /api/fal/models). */
 export async function GET() {
-  return NextResponse.json({
-    models: ALLOWED_FAL_MODELS.map((id) => ({
-      id,
-      label: id.replace("fal-ai/", ""),
-      kind: "image",
-    })),
-  });
+  try {
+    const data = await listFalModels({ limit: 50, status: "active" });
+    const allowed = data.models.filter((m) => isFalEndpointIdAllowed(m.endpoint_id));
+    return NextResponse.json({
+      models: allowed.map((m) => ({
+        id: m.endpoint_id,
+        label: m.metadata?.display_name ?? m.endpoint_id.replace(/^fal-ai\//, ""),
+        kind: m.metadata?.category ?? "unknown",
+      })),
+      next_cursor: data.next_cursor ?? null,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ error: msg, models: [] }, { status: 502 });
+  }
 }

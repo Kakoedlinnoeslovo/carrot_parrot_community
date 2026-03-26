@@ -9,6 +9,10 @@ import { z } from "zod";
 
 const postSchema = z.object({
   workflowId: z.string().min(1),
+  /** When true, every fal_model step calls fal (no copy from a prior run). */
+  forceFullRerun: z.boolean().optional(),
+  /** Optional succeeded run to match inputs against; defaults to latest succeeded run for this workflow. */
+  reuseFromRunId: z.string().min(1).optional(),
 });
 
 export async function POST(req: Request) {
@@ -46,12 +50,34 @@ export async function POST(req: Request) {
 
   await bumpDailyRunCount(session.user.id);
 
+  let reuseReferenceRunId: string | null = null;
+  const forceFull = parsed.data.forceFullRerun ?? false;
+  if (!forceFull && parsed.data.reuseFromRunId) {
+    const ref = await prisma.run.findFirst({
+      where: {
+        id: parsed.data.reuseFromRunId,
+        workflowId: wf.id,
+        userId: session.user.id,
+        status: "succeeded",
+      },
+    });
+    if (!ref) {
+      return NextResponse.json(
+        { error: "reuseFromRunId not found or is not a succeeded run for this workflow" },
+        { status: 400 },
+      );
+    }
+    reuseReferenceRunId = ref.id;
+  }
+
   const run = await prisma.$transaction(async (tx) => {
     const r = await tx.run.create({
       data: {
         workflowId: wf.id,
         userId: session.user.id,
         status: "pending",
+        skipStepReuse: forceFull,
+        reuseReferenceRunId,
       },
     });
     await tx.runStep.createMany({

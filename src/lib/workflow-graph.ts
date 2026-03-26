@@ -1,8 +1,38 @@
 import { z } from "zod";
 
-/** Curated fal models — server allowlist */
-export const ALLOWED_FAL_MODELS = ["fal-ai/flux/schnell"] as const;
-export type AllowedFalModelId = (typeof ALLOWED_FAL_MODELS)[number];
+const falEndpointIdSchema = z
+  .string()
+  .min(3)
+  .refine((s) => s.includes("/"), "Must look like a fal endpoint id (e.g. fal-ai/flux/schnell)");
+
+const falModelDataSchema = z.preprocess((raw) => {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
+    return raw;
+  }
+  const o = raw as Record<string, unknown>;
+  let falInput = o.falInput;
+  if (falInput == null || typeof falInput !== "object" || Array.isArray(falInput)) {
+    falInput = {};
+  } else {
+    falInput = { ...(falInput as Record<string, unknown>) };
+  }
+  const fi = falInput as Record<string, unknown>;
+  if (typeof o.prompt === "string" && fi.prompt === undefined) {
+    fi.prompt = o.prompt;
+  }
+  return { ...o, falInput: fi };
+}, z.object({
+  falModelId: falEndpointIdSchema,
+  falInput: z.record(z.string(), z.unknown()),
+  prompt: z.string().optional(),
+}));
+
+const inputSlotSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum(["image", "text"]),
+  label: z.string().default(""),
+  value: z.string().default(""),
+});
 
 export const workflowNodeSchema = z.discriminatedUnion("type", [
   z.object({
@@ -15,11 +45,34 @@ export const workflowNodeSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     id: z.string().min(1),
-    type: z.literal("fal_model"),
+    type: z.literal("input_image"),
     data: z.object({
-      falModelId: z.enum(ALLOWED_FAL_MODELS),
-      prompt: z.string().min(1, "Prompt is required"),
+      /** Public https URL or data:image/… URI after optional file upload */
+      imageUrl: z.string().default(""),
     }),
+    position: z.object({ x: z.number(), y: z.number() }),
+  }),
+  z.object({
+    id: z.string().min(1),
+    type: z.literal("input_group"),
+    data: z.object({
+      /** Named slots; each has a source handle `id` for edges */
+      slots: z.array(inputSlotSchema).default([]),
+    }),
+    position: z.object({ x: z.number(), y: z.number() }),
+  }),
+  z.object({
+    id: z.string().min(1),
+    type: z.literal("output_preview"),
+    data: z.object({
+      title: z.string().default("Result"),
+    }),
+    position: z.object({ x: z.number(), y: z.number() }),
+  }),
+  z.object({
+    id: z.string().min(1),
+    type: z.literal("fal_model"),
+    data: falModelDataSchema,
     position: z.object({ x: z.number(), y: z.number() }),
   }),
 ]);

@@ -13,7 +13,10 @@ export const DEFAULT_WORKFLOW_GRAPH: WorkflowGraph = {
       type: "fal_model",
       data: {
         falModelId: "fal-ai/flux/schnell",
-        prompt: "A vibrant carrot character mascot, studio photo",
+        falInput: {
+          prompt: "A vibrant carrot character mascot, studio photo",
+          num_images: 1,
+        },
       },
       position: { x: 320, y: 80 },
     },

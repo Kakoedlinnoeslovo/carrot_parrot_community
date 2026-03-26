@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fafafa;
+  --foreground: #18181b;
 }
 
 @theme inline {
@@ -12,15 +12,115 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* @rjsf/core has no bundled CSS in v6 — minimal layout for fal model inputs */
+.fal-rjsf .form-group,
+.fal-rjsf .field {
+  margin-bottom: 0.5rem;
+}
+.fal-rjsf label.control-label {
+  display: block;
+  font-size: 0.75rem;
+  color: #d4d4d8;
+  margin-bottom: 0.25rem;
+}
+/* RJSF schema descriptions — must stay readable on zinc-950 (were effectively invisible) */
+.fal-rjsf .field-description,
+.fal-rjsf .help-block {
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: #d4d4d8;
+  margin-top: 0.125rem;
+  margin-bottom: 0.375rem;
+}
+.fal-rjsf .field-description p {
+  margin: 0 0 0.375rem;
+}
+.fal-rjsf .field-description p:last-child {
+  margin-bottom: 0;
+}
+.fal-rjsf fieldset legend {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #d4d4d8;
+  padding: 0;
+}
+.fal-rjsf input[type="text"],
+.fal-rjsf input[type="number"],
+.fal-rjsf select,
+.fal-rjsf textarea {
+  width: 100%;
+  border-radius: 0.25rem;
+  border: 1px solid #3f3f46;
+  background: #18181b;
+  color: #f4f4f5;
+  padding: 0.375rem 0.5rem;
+  font-size: 0.875rem;
+}
+.fal-rjsf .checkbox > label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #e4e4e7;
+}
+.fal-rjsf .panel.errors {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: #f87171;
+}
+
+/* Workflow editor (@xyflow/react): bigger hit targets + snap-to-port feedback */
+.workflow-flow .react-flow__handle {
+  pointer-events: auto;
+}
+
+.workflow-flow .react-flow__handle.connectingto.valid {
+  z-index: 20;
+  outline: 2px solid rgba(251, 191, 36, 0.95);
+  outline-offset: 3px;
+  border-radius: 3px;
+  box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.22);
+}
+
+/* Landing: antigravity-style hero graph (GPU-friendly; respect motion prefs via class toggle) */
+@keyframes hero-graph-flow {
+  to {
+    stroke-dashoffset: -36;
+  }
+}
+
+@keyframes hero-graph-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.hero-graph-demo--motion .hero-graph-edge {
+  stroke-dasharray: 5 10;
+  animation: hero-graph-flow 0.95s linear infinite;
+  will-change: stroke-dashoffset;
+}
+
+.hero-graph-demo--motion .hero-graph-node {
+  transform-box: fill-box;
+  transform-origin: 48px 32px;
+  animation: hero-graph-float 4.8s ease-in-out infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-graph-demo--motion .hero-graph-edge,
+  .hero-graph-demo--motion .hero-graph-node {
+    animation: none !important;
+    will-change: auto;
+  }
 }

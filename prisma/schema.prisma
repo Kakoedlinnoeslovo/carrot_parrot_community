@@ -3,8 +3,11 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  /// Pooled URL (Neon: “Pooled connection”, host contains `-pooler` or port 6543). Add `?pgbouncer=true&sslmode=require`.
+  url       = env("DATABASE_URL")
+  /// Direct URL for migrations (Neon: “Direct connection”, non-pooler). If you do not use a pooler, set the same value as DATABASE_URL.
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -101,6 +104,11 @@ model Run {
   error      String?
   startedAt  DateTime  @default(now())
   finishedAt DateTime?
+
+  /// When true, fal_model steps always call fal (no copy from a prior run).
+  skipStepReuse Boolean @default(false)
+  /// Optional explicit prior run to copy matching steps from; otherwise latest succeeded run is used.
+  reuseReferenceRunId String?
 
   workflow Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
