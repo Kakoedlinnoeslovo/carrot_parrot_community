@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { AnalyticsEvent, track } from "@/lib/analytics";
 
 export function RemixButton({ workflowId }: { workflowId: string }) {
   const router = useRouter();
@@ -13,7 +14,13 @@ export function RemixButton({ workflowId }: { workflowId: string }) {
     setPending(false);
     if (!res.ok) return;
     const j = (await res.json()) as { workflow?: { id: string } };
-    if (j.workflow?.id) router.push(`/studio/${j.workflow.id}`);
+    if (j.workflow?.id) {
+      track(AnalyticsEvent.communityRemixSuccess, {
+        sourceWorkflowId: workflowId,
+        newWorkflowId: j.workflow.id,
+      });
+      router.push(`/studio/${j.workflow.id}`);
+    }
   }
 
   return (

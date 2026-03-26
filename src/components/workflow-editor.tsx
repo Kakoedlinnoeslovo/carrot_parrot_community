@@ -28,6 +28,7 @@ import {
   listMappableOutputKeysFromSchema,
   orderOutputHandleKeys,
 } from "@/lib/fal-schema-handles";
+import { AnalyticsEvent, track } from "@/lib/analytics";
 
 const DEFAULT_OUTPUT_HANDLE_KEYS = ["out", "images", "text", "media"] as const;
 
@@ -289,8 +290,11 @@ function InputImageNodeSettings({
       }
       if (j.url) {
         onImageUrlChange(j.url);
+        track(AnalyticsEvent.storageUploadSuccess, { context: "input_image" });
       }
     } catch (e) {
+      const msg = (e instanceof Error ? e.message : String(e)).slice(0, 120);
+      track(AnalyticsEvent.storageUploadError, { context: "input_image", message: msg });
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
@@ -362,8 +366,11 @@ function InputGroupNodeSettings({
         const next = [...slots];
         next[index] = { ...next[index]!, value: j.url };
         onSlotsChange(next);
+        track(AnalyticsEvent.storageUploadSuccess, { context: "input_group_slot" });
       }
     } catch (e) {
+      const msg = (e instanceof Error ? e.message : String(e)).slice(0, 120);
+      track(AnalyticsEvent.storageUploadError, { context: "input_group_slot", message: msg });
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusyIdx(null);
@@ -709,6 +716,7 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
   >({});
   const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
   const detailRequestedRef = useRef<Set<string>>(new Set());
+  const runTerminalLoggedRef = useRef<string | null>(null);
 
   useEffect(() => {
     setOrigin(window.location.origin);
@@ -872,6 +880,7 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
   const deleteNodesById = useCallback(
     (ids: Set<string>) => {
       if (ids.size === 0) return;
+      track(AnalyticsEvent.canvasDeleteNode, { count: ids.size });
       setNodes((nds) => nds.filter((n) => !ids.has(n.id)));
       setEdges((eds) => eds.filter((e) => !ids.has(e.source) && !ids.has(e.target)));
       setSelectedId((cur) => (cur && ids.has(cur) ? null : cur));
@@ -890,8 +899,16 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
   );
 
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge({ ...params, id: `e-${nanoid(8)}` }, eds)),
-    [setEdges],
+    (params: Connection) => {
+      const src = nodes.find((n) => n.id === params.source);
+      const tgt = nodes.find((n) => n.id === params.target);
+      track(AnalyticsEvent.canvasConnect, {
+        sourceType: src?.type ?? "unknown",
+        targetType: tgt?.type ?? "unknown",
+      });
+      setEdges((eds) => addEdge({ ...params, id: `e-${nanoid(8)}` }, eds));
+    },
+    [nodes, setEdges],
   );
 
   const save = useCallback(async () => {
@@ -905,15 +922,18 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
       });
       if (!res.ok) throw new Error("Save failed");
       setSaveState("saved");
+      track(AnalyticsEvent.workflowSaveSuccess, { workflowId });
       setTimeout(() => setSaveState("idle"), 2000);
     } catch {
       setSaveState("error");
+      track(AnalyticsEvent.workflowSaveError, { workflowId });
     }
   }, [nodes, edges, workflowId, wfTitle]);
 
   const addNode = (
     kind: "input_prompt" | "input_image" | "input_group" | "output_preview" | "fal_model",
   ) => {
+    track(AnalyticsEvent.canvasAddNode, { nodeType: kind });
     const id = nanoid(10);
     const y = 40 + nodes.length * 28;
     const base: Node = {
@@ -989,6 +1009,13 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
       setArtifactPreviewByNodeId(byNode);
       if (data.run.status === "succeeded" || data.run.status === "failed") {
         clearInterval(t);
+        if (runId && runTerminalLoggedRef.current !== runId) {
+          runTerminalLoggedRef.current = runId;
+          track(AnalyticsEvent.workflowRunComplete, {
+            workflowId,
+            status: data.run.status,
+          });
+        }
         if (data.run.status === "succeeded") {
           let items = collectRunOutputs(steps);
           let ev = collectWorkflowStreamEvents(steps);
@@ -1011,22 +1038,25 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
       }
     }, 1500);
     return () => clearInterval(t);
-  }, [runId]);
+  }, [runId, workflowId]);
 
   const publish = async () => {
     await save();
     const res = await fetch(`/api/workflows/${workflowId}/publish`, { method: "POST" });
     const j = (await res.json()) as { workflow?: { slug?: string | null }; error?: string };
     if (!res.ok) {
+      track(AnalyticsEvent.workflowPublishError, { workflowId, status: res.status });
       alert(j.error ?? "Publish failed");
       return;
     }
+    track(AnalyticsEvent.workflowPublishSuccess, { workflowId });
     setPubVis("published");
     if (j.workflow?.slug) setPubSlug(j.workflow.slug);
   };
 
   const runWorkflow = async () => {
     await save();
+    runTerminalLoggedRef.current = null;
     setRunOutputs([]);
     setArtifactPreviewByNodeId({});
     setWorkflowStreamEvents([]);
@@ -1045,8 +1075,10 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
     if (!res.ok) {
       setRunStatus("failed");
       setRunError(j.error ?? "Run failed");
+      track(AnalyticsEvent.workflowRunComplete, { workflowId, status: "failed" });
       return;
     }
+    track(AnalyticsEvent.workflowRunStart, { workflowId });
     setRunId(j.runId!);
     setRunStatus("running");
   };
@@ -1385,6 +1417,9 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
                         type="button"
                         className="w-full px-2 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800"
                         onClick={() => {
+                          track(AnalyticsEvent.workflowTemplateApplied, {
+                            templateId: tpl.id.slice(0, 96),
+                          });
                           updateSelectedData({
                             falModelId: tpl.id,
                             falInput: { ...tpl.defaultFalInput },
@@ -1417,6 +1452,9 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
                         type="button"
                         className="w-full px-2 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800"
                         onClick={() => {
+                          track(AnalyticsEvent.falModelSelected, {
+                            endpointId: m.endpoint_id.slice(0, 96),
+                          });
                           updateSelectedData({ falModelId: m.endpoint_id, falInput: {} });
                         }}
                       >

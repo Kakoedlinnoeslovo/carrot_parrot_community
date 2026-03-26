@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@/auth";
 import { LikeButton } from "@/components/like-button";
+import { PublishedWorkflowViewBeacon } from "@/components/published-workflow-view-beacon";
 import { PublishedWorkflowShowcase } from "@/components/published-workflow-showcase";
 import { RemixButton } from "@/components/remix-button";
 import { extractGraphMediaHints } from "@/lib/graph-media-hints";
@@ -57,6 +58,7 @@ export default async function PublicWorkflowPage({ params }: PageProps) {
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-12">
+      <PublishedWorkflowViewBeacon slug={slug} />
       <p className="text-xs font-semibold uppercase tracking-wide text-orange-600">Published workflow</p>
       <h1 className="mt-2 text-3xl font-semibold text-zinc-900">{wf.title ?? "Untitled"}</h1>
       <p className="mt-2 text-sm text-zinc-600">

@@ -1,6 +1,5 @@
-import Link from "next/link";
-
 import { HeroGraphDemo } from "@/components/hero-graph-demo";
+import { TrackedLink } from "@/components/tracked-link";
 
 const highlights = [
   { title: "Visual graph", body: "Wire inputs to outputs like a mini n8n—built for creative stacks." },
@@ -34,18 +33,20 @@ export default function Home() {
               subscriptions in this test build; guardrails protect your API spend.
             </p>
             <div className="flex flex-wrap gap-4">
-              <Link
+              <TrackedLink
                 href="/register"
+                eventLabel="hero_get_started"
                 className="rounded-lg bg-orange-600 px-5 py-2.5 font-medium text-white shadow-[0_12px_32px_-8px_rgba(234,88,12,0.45)] transition-[background-color,box-shadow] duration-300 ease-out hover:bg-orange-500 hover:shadow-[0_16px_40px_-8px_rgba(234,88,12,0.5)]"
               >
                 Get started
-              </Link>
-              <Link
+              </TrackedLink>
+              <TrackedLink
                 href="/community"
+                eventLabel="hero_explore_community"
                 className="rounded-lg border border-zinc-300 bg-white px-5 py-2.5 font-medium text-zinc-800 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.12)] transition-[background-color,border-color,box-shadow] duration-300 ease-out hover:border-zinc-400 hover:bg-zinc-50"
               >
                 Explore community
-              </Link>
+              </TrackedLink>
             </div>
 
             <ul className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">

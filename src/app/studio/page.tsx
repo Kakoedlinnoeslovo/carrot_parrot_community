@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
+import { NewWorkflowForm } from "@/components/new-workflow-form";
 import { prisma } from "@/lib/db";
-import { createWorkflowAction } from "@/app/studio/actions";
 
 export default async function StudioIndexPage() {
   const session = await auth();
@@ -23,14 +23,7 @@ export default async function StudioIndexPage() {
     <div className="mx-auto max-w-3xl px-6 py-12">
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold text-zinc-900">Your workflows</h1>
-        <form action={createWorkflowAction}>
-          <button
-            type="submit"
-            className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white transition-colors duration-300 ease-out hover:bg-orange-500"
-          >
-            New workflow
-          </button>
-        </form>
+        <NewWorkflowForm />
       </div>
       <p className="mt-2 text-sm text-zinc-600">
         Open the canvas, connect nodes, and run with your fal.ai key on the server.

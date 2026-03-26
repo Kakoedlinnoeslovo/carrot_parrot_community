@@ -4,6 +4,7 @@ import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { AnalyticsEvent, track } from "@/lib/analytics";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -20,9 +21,11 @@ export default function LoginPage() {
       redirect: false,
     });
     if (res?.error) {
+      track(AnalyticsEvent.authLoginFailure);
       setError("Invalid email or password.");
       return;
     }
+    track(AnalyticsEvent.authLoginSuccess);
     router.push("/studio");
     router.refresh();
   }

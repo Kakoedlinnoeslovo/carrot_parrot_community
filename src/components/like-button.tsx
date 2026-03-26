@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { AnalyticsEvent, track } from "@/lib/analytics";
 
 export function LikeButton({
   workflowId,
@@ -23,6 +24,11 @@ export function LikeButton({
     const j = (await res.json()) as { liked: boolean; likeCount: number };
     setLiked(j.liked);
     setCount(j.likeCount);
+    track(AnalyticsEvent.communityLikeToggle, {
+      workflowId,
+      liked: j.liked,
+      likeCount: j.likeCount,
+    });
     router.refresh();
   }
 

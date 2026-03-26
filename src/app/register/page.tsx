@@ -4,6 +4,7 @@ import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { AnalyticsEvent, track } from "@/lib/analytics";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -22,6 +23,10 @@ export default function RegisterPage() {
     });
     const data = (await res.json()) as { error?: string };
     if (!res.ok) {
+      track(AnalyticsEvent.authRegisterFailure, {
+        reason: "api_error",
+        status: res.status,
+      });
       setError(data.error ?? "Registration failed");
       return;
     }
@@ -31,9 +36,11 @@ export default function RegisterPage() {
       redirect: false,
     });
     if (sign?.error) {
+      track(AnalyticsEvent.authRegisterFailure, { reason: "signin_after_register" });
       setError("Account created but sign-in failed. Try logging in.");
       return;
     }
+    track(AnalyticsEvent.authRegisterSuccess);
     router.push("/studio");
     router.refresh();
   }

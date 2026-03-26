@@ -16,6 +16,7 @@
     "@rjsf/core": "^6.4.1",
     "@rjsf/utils": "^6.4.1",
     "@rjsf/validator-ajv8": "^6.4.1",
+    "@vercel/analytics": "^2.0.1",
     "@xyflow/react": "^12.10.1",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
