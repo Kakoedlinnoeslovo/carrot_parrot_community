@@ -32,6 +32,43 @@ describe("extractTextFromFalData", () => {
     ).toBe("from chat completion");
   });
 
+  it("reads choices message.content as array of text parts", () => {
+    expect(
+      extractTextFromFalData({
+        choices: [
+          {
+            message: {
+              content: [
+                { type: "text", text: "Caption line one." },
+                { type: "text", text: "Line two." },
+              ],
+            },
+          },
+        ],
+      }),
+    ).toBe("Caption line one.\nLine two.");
+  });
+
+  it("unwraps nested output object", () => {
+    expect(
+      extractTextFromFalData({
+        output: { text: "nested in output object" },
+      }),
+    ).toBe("nested in output object");
+  });
+
+  it("unwraps result.data style nesting", () => {
+    expect(
+      extractTextFromFalData({
+        result: { data: { output: "deep caption" } },
+      }),
+    ).toBe("deep caption");
+  });
+
+  it("ignores bare https strings as caption", () => {
+    expect(extractTextFromFalData({ output: "https://cdn.example.com/x.png" })).toBeUndefined();
+  });
+
   it("returns undefined for empty output", () => {
     expect(extractTextFromFalData({ output: "   " })).toBeUndefined();
     expect(extractTextFromFalData(null)).toBeUndefined();
