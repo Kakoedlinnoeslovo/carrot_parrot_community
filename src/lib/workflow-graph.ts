@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isQueueInfraOutputKey } from "@/lib/fal-schema-handles";
 
 const falEndpointIdSchema = z
   .string()
@@ -112,15 +113,101 @@ export type WorkflowGraph = z.infer<typeof workflowGraphSchema>;
 export type WorkflowNode = z.infer<typeof workflowNodeSchema>;
 export type WorkflowEdge = z.infer<typeof workflowEdgeSchema>;
 
+function isLegacyFalTarget(th: string | null | undefined): boolean {
+  return th == null || th === "" || th === "in";
+}
+
+function pickImageInputKeyForTarget(tgt: WorkflowNode & { type: "fal_model" }): string {
+  const eid = String(tgt.data.falModelId ?? "").toLowerCase();
+  if (eid.includes("image-to-video") || eid.includes("kling-video") || eid.includes("kling")) {
+    return "start_image_url";
+  }
+  return "image_url";
+}
+
+/** Best-effort explicit fal input for edges that used legacy `in` / missing targetHandle. */
+function inferLegacyTargetHandle(graph: WorkflowGraph, edge: WorkflowEdge): string {
+  const src = graph.nodes.find((n) => n.id === edge.source);
+  const tgt = graph.nodes.find((n) => n.id === edge.target);
+  if (!src || tgt?.type !== "fal_model") return "prompt";
+
+  if (src.type === "input_prompt") return "prompt";
+  if (src.type === "input_image") return "image_url";
+
+  if (src.type === "input_group") {
+    const slots = src.data.slots ?? [];
+    const slot = slots.find((s) => s.id === edge.sourceHandle);
+    if (slot?.kind === "text") return "prompt";
+    return "image_url";
+  }
+
+  if (src.type === "fal_model") {
+    let sh = edge.sourceHandle ?? "out";
+    if (sh && isQueueInfraOutputKey(sh)) sh = "out";
+    if (sh === "images" || sh === "media") return pickImageInputKeyForTarget(tgt);
+    if (sh === "text") return "prompt";
+    const tgtId = String(tgt.data.falModelId ?? "").toLowerCase();
+    if (sh === "out" || sh === "") {
+      if (
+        tgtId.includes("image-to-video") ||
+        tgtId.includes("kling-video") ||
+        (tgtId.includes("reference") && tgtId.includes("video")) ||
+        tgtId.includes("/video/")
+      ) {
+        return pickImageInputKeyForTarget(tgt);
+      }
+      if (tgtId.includes("openrouter") || tgtId.includes("/vision") || tgtId.includes("vlm")) {
+        return "prompt";
+      }
+      // Typical fal → fal chain: prior image into img2img / edit / still generation
+      return "image_url";
+    }
+    return "prompt";
+  }
+
+  return "prompt";
+}
+
+/**
+ * Single fal output handle `out`, no legacy `in` targets; remaps old source handles to `out`.
+ */
+export function migrateWorkflowGraphEdges(graph: WorkflowGraph): WorkflowGraph {
+  const typeById = new Map(graph.nodes.map((n) => [n.id, n.type]));
+  const edges = graph.edges.map((e) => {
+    let targetHandle = e.targetHandle;
+    if (typeById.get(e.target) === "fal_model" && isLegacyFalTarget(targetHandle)) {
+      targetHandle = inferLegacyTargetHandle(graph, e);
+    }
+
+    let sourceHandle = e.sourceHandle;
+    if (typeById.get(e.source) === "fal_model" && sourceHandle && isQueueInfraOutputKey(sourceHandle)) {
+      sourceHandle = "out";
+    }
+    if (
+      typeById.get(e.source) === "fal_model" &&
+      (sourceHandle === "text" || sourceHandle === "images" || sourceHandle === "media")
+    ) {
+      sourceHandle = "out";
+    }
+
+    return { ...e, sourceHandle, targetHandle };
+  });
+
+  return { ...graph, edges };
+}
+
 export function parseWorkflowGraph(json: string): WorkflowGraph {
   const raw = JSON.parse(json) as unknown;
-  return workflowGraphSchema.parse(raw);
+  const parsed = workflowGraphSchema.parse(raw);
+  return migrateWorkflowGraphEdges(parsed);
 }
 
 export function safeParseWorkflowGraph(json: string) {
   try {
     const raw = JSON.parse(json) as unknown;
-    return workflowGraphSchema.safeParse(raw);
+    const r = workflowGraphSchema.safeParse(raw);
+    if (!r.success) return r;
+    return { success: true as const, data: migrateWorkflowGraphEdges(r.data) };
   } catch {
     return { success: false as const, error: new Error("Invalid JSON") };
   }

@@ -20,15 +20,6 @@ export function falEndpointUsesImageUrlsArray(endpointId: string): boolean {
   return false;
 }
 
-function imageUrlsFieldEmpty(input: Record<string, unknown>): boolean {
-  const existingUrls = input.image_urls;
-  return (
-    !Array.isArray(existingUrls) ||
-    existingUrls.length === 0 ||
-    existingUrls.every((u) => u == null || String(u).trim() === "")
-  );
-}
-
 /** Map upstream prompts into workflow-specific fields (e.g. weather template). */
 export function applyWorkflowInputAliases(
   endpointId: string,
@@ -73,7 +64,7 @@ function incomingEdges(graph: WorkflowGraph, nodeId: string): WorkflowEdge[] {
 }
 
 function isExplicitTargetHandle(h: string | null | undefined): boolean {
-  return Boolean(h && h !== "in");
+  return typeof h === "string" && h.trim() !== "" && h !== "in";
 }
 
 function resolveUpstream(
@@ -112,35 +103,15 @@ function resolveUpstream(
     const art = artifacts[edge.source];
     if (!art) return { texts: [], urls: [] };
     const sh = edge.sourceHandle ?? "out";
-    /** OpenAPI labels queue submit fields as "outputs"; we only have finished media in artifacts. */
-    if (sh === "out" || sh === "" || isMisleadingQueueOutputHandle(sh)) {
+    if (isMisleadingQueueOutputHandle(sh)) {
       const texts = art.text ? [art.text] : [];
       const urls = [...art.images, ...(art.media?.map((m) => m.url) ?? [])];
       return { texts, urls: [...new Set(urls)] };
     }
-    if (sh === "text") {
-      return { texts: art.text ? [art.text] : [], urls: [] };
-    }
-    if (sh === "images") {
-      const urls = [
-        ...art.images,
-        ...(art.media?.filter((m) => m.kind === "image" || m.kind === "unknown").map((m) => m.url) ?? []),
-      ];
-      return { texts: [], urls: [...new Set(urls)] };
-    }
-    if (sh === "media") {
-      const urls = art.media?.map((m) => m.url) ?? art.images;
-      return { texts: [], urls: [...new Set(urls)] };
-    }
-    if (sh === "video") {
-      const urls = art.media?.filter((m) => m.kind === "video").map((m) => m.url) ?? [];
-      return { texts: [], urls: urls };
-    }
-    if (sh === "audio") {
-      const urls = art.media?.filter((m) => m.kind === "audio").map((m) => m.url) ?? [];
-      return { texts: [], urls: urls };
-    }
-    return { texts: [], urls: art.images[0] ? [art.images[0]] : [] };
+    /** Single UI port `out` (and OpenAPI output keys): full artifact — text plus media URLs. */
+    const texts = art.text ? [art.text] : [];
+    const urls = [...art.images, ...(art.media?.map((m) => m.url) ?? [])];
+    return { texts, urls: [...new Set(urls)] };
   }
 
   return { texts: [], urls: [] };
@@ -208,8 +179,8 @@ function assignExplicitTarget(
 }
 
 /**
- * Merge static falInput with upstream nodes. Respects edge targetHandle / sourceHandle when set;
- * edges to target handle `in` (or missing) use legacy prompt + image merge heuristics.
+ * Merge static falInput with upstream nodes. Each wire must target a real API field
+ * (e.g. `prompt`, `image_url`); there is no legacy `in` bucket.
  */
 export function mergeFalInput(
   node: Extract<WorkflowNode, { type: "fal_model" }>,
@@ -218,11 +189,9 @@ export function mergeFalInput(
 ): Record<string, unknown> {
   const input: Record<string, unknown> = { ...(node.data.falInput ?? {}) };
   const endpointId = node.data.falModelId;
-  const useImageUrlsArray = falEndpointUsesImageUrlsArray(endpointId);
 
   const edges = incomingEdges(graph, node.id);
   const explicit = edges.filter((e) => isExplicitTargetHandle(e.targetHandle ?? null));
-  const legacy = edges.filter((e) => !isExplicitTargetHandle(e.targetHandle ?? null));
 
   for (const e of explicit) {
     const key = e.targetHandle as string;
@@ -230,48 +199,9 @@ export function mergeFalInput(
     assignExplicitTarget(endpointId, input, key, signal);
   }
 
-  const parentArtifacts = legacy.map((e) => artifacts[e.source]).filter((a): a is MergeArtifact => Boolean(a));
-
-  const texts = parentArtifacts.map((a) => a.text).filter((t): t is string => Boolean(t));
-  if (texts.length) {
-    if (typeof input.prompt === "string") {
-      input.prompt = [...texts, input.prompt].join("\n");
-    } else if (input.prompt === undefined) {
-      input.prompt = texts.join("\n");
-    }
-  }
-  const parentUrls = parentArtifacts.flatMap((a) => {
-    const fromMedia = a.media?.map((m) => m.url) ?? [];
-    return [...a.images, ...fromMedia];
-  });
-  const uniqueParentUrls = [...new Set(parentUrls)];
-
-  if (useImageUrlsArray) {
-    if (uniqueParentUrls.length && imageUrlsFieldEmpty(input)) {
-      input.image_urls = uniqueParentUrls;
-    } else if (imageUrlsFieldEmpty(input)) {
-      const single = input.image_url;
-      if (typeof single === "string" && single.trim() !== "") {
-        input.image_urls = [single];
-      }
-    }
-    delete input.image_url;
-  } else if (uniqueParentUrls.length) {
-    const first = uniqueParentUrls[0];
-    if (first) {
-      const eid = endpointId.toLowerCase();
-      const prefersStartImage =
-        eid.includes("image-to-video") || eid.includes("kling-video") || eid.includes("kling");
-      if (prefersStartImage) {
-        if (input.start_image_url === undefined || String(input.start_image_url).trim() === "") {
-          input.start_image_url = first;
-        }
-      } else if (input.image_url === undefined || input.image_url === "") {
-        input.image_url = first;
-      }
-    }
-  }
-
+  const texts = explicit
+    .flatMap((e) => resolveUpstream(e, graph, artifacts).texts)
+    .filter((t): t is string => Boolean(t));
   applyWorkflowInputAliases(endpointId, input, texts);
 
   return input;
