@@ -2,6 +2,8 @@ import Link from "next/link";
 import { auth } from "@/auth";
 import { CommunityWorkflowCard } from "@/components/community-workflow-card";
 import { communityPreviewFromWorkflow } from "@/lib/community-preview";
+import { extractFalModelsUsed } from "@/lib/graph-models-used";
+import { safeParseWorkflowGraph } from "@/lib/workflow-graph";
 import { prisma } from "@/lib/db";
 import {
   listPublishedWorkflowsForFeed,
@@ -72,13 +74,21 @@ export default async function CommunityPage({ searchParams }: PageProps) {
       </div>
 
       <div className="mt-10 columns-2 gap-4 sm:columns-3 lg:columns-4">
-        {withSlug.map((w, i) => (
+        {withSlug.map((w, i) => {
+          const parsed = safeParseWorkflowGraph(w.graphJson);
+          const modelsUsed = parsed.success ? extractFalModelsUsed(parsed.data) : [];
+          return (
           <CommunityWorkflowCard
             key={w.id}
             workflowId={w.id}
             slug={w.slug}
             title={w.title}
-            preview={communityPreviewFromWorkflow(w.coverImageUrl, w.graphJson)}
+            preview={communityPreviewFromWorkflow(
+              w.coverImageUrl,
+              w.graphJson,
+              w.coverPreviewKind,
+            )}
+            modelsUsed={modelsUsed}
             authorName={w.user.name}
             authorEmail={w.user.email}
             authorImage={w.user.image}
@@ -87,7 +97,8 @@ export default async function CommunityPage({ searchParams }: PageProps) {
             isLoggedIn={!!session?.user}
             index={i}
           />
-        ))}
+          );
+        })}
       </div>
 
       {withSlug.length === 0 && (

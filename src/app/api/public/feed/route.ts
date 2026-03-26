@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
+import { extractFalModelsUsed } from "@/lib/graph-models-used";
 import { listPublishedWorkflowsForFeed } from "@/lib/published-community-query";
+import { safeParseWorkflowGraph } from "@/lib/workflow-graph";
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -24,18 +26,24 @@ export async function GET(req: Request) {
   }
 
   return NextResponse.json({
-    items: sorted.map((w) => ({
-      id: w.id,
-      title: w.title,
-      description: w.description,
-      slug: w.slug,
-      coverImageUrl: w.coverImageUrl,
-      updatedAt: w.updatedAt,
-      author: {
-        name: w.user.name ?? w.user.email?.split("@")[0] ?? "Creator",
-      },
-      likeCount: w._count.likes,
-      likedByMe: likedIds.has(w.id),
-    })),
+    items: sorted.map((w) => {
+      const parsed = safeParseWorkflowGraph(w.graphJson);
+      const modelsUsed = parsed.success ? extractFalModelsUsed(parsed.data) : [];
+      return {
+        id: w.id,
+        title: w.title,
+        description: w.description,
+        slug: w.slug,
+        coverImageUrl: w.coverImageUrl,
+        coverPreviewKind: w.coverPreviewKind,
+        modelsUsed,
+        updatedAt: w.updatedAt,
+        author: {
+          name: w.user.name ?? w.user.email?.split("@")[0] ?? "Creator",
+        },
+        likeCount: w._count.likes,
+        likedByMe: likedIds.has(w.id),
+      };
+    }),
   });
 }

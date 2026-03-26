@@ -22,6 +22,7 @@ import {
   type MediaItem,
   parseArtifactJson,
 } from "@/lib/artifact-json";
+import { pickWorkflowCoverFromRunSteps } from "@/lib/workflow-cover-from-run";
 
 export type { Artifact, MediaItem } from "@/lib/artifact-json";
 
@@ -586,6 +587,32 @@ async function finalizeRunIfDone(runId: string) {
       where: { id: runId },
       data: { status: "succeeded", finishedAt: new Date() },
     });
+
+    const run = await prisma.run.findUnique({
+      where: { id: runId },
+      select: {
+        userId: true,
+        workflowId: true,
+        workflow: { select: { userId: true } },
+      },
+    });
+    if (run?.workflow && run.userId === run.workflow.userId) {
+      const ordered = await prisma.runStep.findMany({
+        where: { runId },
+        orderBy: { createdAt: "asc" },
+        select: { outputsJson: true, createdAt: true },
+      });
+      const cover = pickWorkflowCoverFromRunSteps(ordered);
+      if (cover) {
+        await prisma.workflow.update({
+          where: { id: run.workflowId },
+          data: {
+            coverImageUrl: cover.url,
+            coverPreviewKind: cover.kind,
+          },
+        });
+      }
+    }
   }
 }
 
