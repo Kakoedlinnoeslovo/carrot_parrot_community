@@ -59,12 +59,12 @@ export default async function PublicWorkflowPage({ params }: PageProps) {
   return (
     <div className="mx-auto max-w-4xl px-6 py-12">
       <PublishedWorkflowViewBeacon slug={slug} />
-      <p className="text-xs font-semibold uppercase tracking-wide text-orange-600">Published workflow</p>
-      <h1 className="mt-2 text-3xl font-semibold text-zinc-900">{wf.title ?? "Untitled"}</h1>
-      <p className="mt-2 text-sm text-zinc-600">
+      <p className="text-xs font-semibold uppercase tracking-wide text-orange-400">Published workflow</p>
+      <h1 className="mt-2 text-3xl font-semibold text-zinc-100">{wf.title ?? "Untitled"}</h1>
+      <p className="mt-2 text-sm text-zinc-400">
         by {wf.user.name ?? wf.user.email?.split("@")[0] ?? "Creator"}
       </p>
-      {wf.description && <p className="mt-6 text-zinc-700">{wf.description}</p>}
+      {wf.description && <p className="mt-6 text-zinc-300">{wf.description}</p>}
 
       <div className="mt-8 flex flex-wrap items-center gap-3">
         {session?.user ? (
@@ -78,8 +78,8 @@ export default async function PublicWorkflowPage({ params }: PageProps) {
           </>
         ) : (
           <>
-            <span className="text-sm text-zinc-600">♡ {wf._count.likes}</span>
-            <Link href="/login" className="text-sm font-medium text-orange-700 underline-offset-4 hover:underline">
+            <span className="text-sm text-zinc-400">♡ {wf._count.likes}</span>
+            <Link href="/login" className="text-sm font-medium text-orange-400 underline-offset-4 hover:underline">
               Log in to like or remix
             </Link>
           </>
@@ -87,7 +87,7 @@ export default async function PublicWorkflowPage({ params }: PageProps) {
       </div>
 
       {wf.coverImageUrl && /^https?:\/\//i.test(wf.coverImageUrl) ? (
-        <div className="motion-reduce:transition-none relative mt-10 overflow-hidden rounded-2xl border border-zinc-200 shadow-[0_24px_80px_rgba(0,0,0,0.08)]">
+        <div className="motion-reduce:transition-none relative mt-10 overflow-hidden rounded-2xl border border-white/10 shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
           {/* eslint-disable-next-line @next/next/no-img-element -- arbitrary publisher CDN URLs */}
           <img
             src={wf.coverImageUrl}
@@ -107,11 +107,11 @@ export default async function PublicWorkflowPage({ params }: PageProps) {
             exemplarPreviewByNodeId={exemplarPreviewByNodeId}
           />
         ) : (
-          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3">
-            <p className="text-sm text-red-800">This published workflow has an invalid graph and cannot be previewed.</p>
+          <div className="rounded-2xl border border-red-500/30 bg-red-950/40 px-4 py-3">
+            <p className="text-sm text-red-300">This published workflow has an invalid graph and cannot be previewed.</p>
             <details className="mt-3">
-              <summary className="cursor-pointer text-xs text-zinc-600">Raw graph JSON</summary>
-              <pre className="mt-2 max-h-64 overflow-auto text-xs text-zinc-700">
+              <summary className="cursor-pointer text-xs text-zinc-400">Raw graph JSON</summary>
+              <pre className="mt-2 max-h-64 overflow-auto text-xs text-zinc-400">
                 {wf.graphJson.slice(0, 4000)}
                 {wf.graphJson.length > 4000 ? "…" : ""}
               </pre>
@@ -120,9 +120,9 @@ export default async function PublicWorkflowPage({ params }: PageProps) {
         )}
       </div>
 
-      <p className="mt-8 text-sm text-zinc-600">
+      <p className="mt-8 text-sm text-zinc-400">
         Copy the share link:{" "}
-        <code className="rounded border border-zinc-200 bg-zinc-100 px-1.5 py-0.5 font-mono text-sm text-zinc-900">
+        <code className="rounded border border-white/10 bg-zinc-900/80 px-1.5 py-0.5 font-mono text-sm text-zinc-200">
           /w/{wf.slug}
         </code>
       </p>

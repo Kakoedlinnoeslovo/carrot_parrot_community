@@ -1193,7 +1193,7 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
           <button
             type="button"
             onClick={() => void save()}
-            className="rounded-md bg-zinc-100 px-3 py-1.5 text-sm font-medium text-zinc-900 hover:bg-white"
+            className="rounded-md border border-white/10 bg-white/10 px-3 py-1.5 text-sm font-medium text-zinc-100 transition-[background-color,border-color] duration-300 ease-out hover:border-white/15 hover:bg-white/15"
           >
             {saveState === "saving" ? "Saving…" : "Save"}
           </button>

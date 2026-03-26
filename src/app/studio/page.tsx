@@ -22,24 +22,24 @@ export default async function StudioIndexPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-12">
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold text-zinc-900">Your workflows</h1>
+        <h1 className="text-2xl font-semibold text-zinc-100">Your workflows</h1>
         <NewWorkflowForm />
       </div>
-      <p className="mt-2 text-sm text-zinc-600">
+      <p className="mt-2 text-sm text-zinc-400">
         Open the canvas, connect nodes, and run with your fal.ai key on the server.
       </p>
 
-      <ul className="mt-10 divide-y divide-zinc-200 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_12px_40px_-24px_rgba(0,0,0,0.1)]">
+      <ul className="mt-10 divide-y divide-white/10 overflow-hidden rounded-xl border border-white/10 bg-white/[0.04] shadow-[0_20px_56px_-28px_rgba(0,0,0,0.65)] backdrop-blur-xl">
         {workflows.length === 0 && (
-          <li className="px-4 py-8 text-center text-zinc-600">No workflows yet. Create one.</li>
+          <li className="px-4 py-8 text-center text-zinc-400">No workflows yet. Create one.</li>
         )}
         {workflows.map((w) => (
           <li key={w.id}>
             <Link
               href={`/studio/${w.id}`}
-              className="flex items-center justify-between px-4 py-4 transition-colors duration-300 ease-out hover:bg-zinc-50"
+              className="flex items-center justify-between px-4 py-4 transition-colors duration-300 ease-out hover:bg-white/5"
             >
-              <span className="font-medium text-zinc-900">{w.title ?? "Untitled"}</span>
+              <span className="font-medium text-zinc-100">{w.title ?? "Untitled"}</span>
               <span className="text-xs text-zinc-500">
                 {w.visibility === "published" ? "Published" : "Private"} ·{" "}
                 {w.updatedAt.toLocaleDateString()}

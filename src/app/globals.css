@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #fafafa;
-  --foreground: #18181b;
+  --background: #09090b;
+  --foreground: #fafafa;
 }
 
 @theme inline {
@@ -122,5 +122,32 @@ body {
   .hero-graph-demo--motion .hero-graph-node {
     animation: none !important;
     will-change: auto;
+  }
+}
+
+/* Landing hero entrance (GPU-friendly; disabled when user prefers reduced motion) */
+@keyframes home-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.home-fade-up {
+  animation: home-fade-up 0.7s ease-out both;
+}
+
+.home-fade-up-delay {
+  animation: home-fade-up 0.85s ease-out 0.12s both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-fade-up,
+  .home-fade-up-delay {
+    animation: none !important;
   }
 }

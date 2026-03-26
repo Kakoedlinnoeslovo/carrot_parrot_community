@@ -53,9 +53,9 @@ export function HeroGraphDemo() {
       className={`hero-graph-demo ${motionClass} relative mx-auto w-full max-w-xl`}
       aria-hidden
     >
-      <div className="pointer-events-none absolute -inset-8 rounded-[2rem] bg-gradient-to-br from-orange-400/20 via-transparent to-amber-400/12 blur-2xl" />
+      <div className="pointer-events-none absolute -inset-8 rounded-[2rem] bg-gradient-to-br from-orange-500/25 via-violet-500/10 to-amber-400/15 blur-2xl" />
       <div
-        className="relative overflow-hidden rounded-2xl border border-zinc-200/90 bg-white/85 shadow-[0_24px_80px_rgba(0,0,0,0.08)] backdrop-blur-xl"
+        className="relative overflow-hidden rounded-2xl border border-white/12 bg-zinc-900/45 shadow-[0_24px_80px_rgba(0,0,0,0.55)] backdrop-blur-xl"
         style={{ perspective: "1400px" }}
       >
         <div
@@ -69,15 +69,15 @@ export function HeroGraphDemo() {
             <div className="flex items-center gap-2">
               <span className="relative flex h-2 w-2">
                 {!reducedMotion && (
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/70 opacity-60" />
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/60 opacity-50" />
                 )}
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
               </span>
-              <span className="font-mono text-[10px] font-medium uppercase tracking-[0.2em] text-zinc-600">
+              <span className="font-mono text-[10px] font-medium uppercase tracking-[0.2em] text-zinc-400">
                 Live canvas preview
               </span>
             </div>
-            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-mono text-[10px] text-zinc-700">
+            <span className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 font-mono text-[10px] text-zinc-300">
               fal pipeline
             </span>
           </div>
@@ -89,9 +89,9 @@ export function HeroGraphDemo() {
           >
             <defs>
               <linearGradient id="hero-edge-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stopColor="rgb(251 146 60)" stopOpacity="0.2" />
-                <stop offset="50%" stopColor="rgb(251 146 60)" stopOpacity="0.85" />
-                <stop offset="100%" stopColor="rgb(251 146 60)" stopOpacity="0.2" />
+                <stop offset="0%" stopColor="rgb(251 146 60)" stopOpacity="0.15" />
+                <stop offset="50%" stopColor="rgb(251 146 60)" stopOpacity="0.95" />
+                <stop offset="100%" stopColor="rgb(251 146 60)" stopOpacity="0.15" />
               </linearGradient>
             </defs>
 
@@ -127,14 +127,14 @@ export function HeroGraphDemo() {
                     width={96}
                     height={64}
                     rx={14}
-                    className="fill-white stroke-zinc-300"
+                    className="fill-zinc-800/90 stroke-white/15"
                     strokeWidth={1}
                   />
                   <text
                     x={48}
                     y={26}
                     textAnchor="middle"
-                    className="fill-zinc-900 text-[11px] font-semibold"
+                    className="fill-zinc-100 text-[11px] font-semibold"
                     style={{ fontFamily: "var(--font-geist-sans), system-ui, sans-serif" }}
                   >
                     {n.label}
@@ -143,7 +143,7 @@ export function HeroGraphDemo() {
                     x={48}
                     y={44}
                     textAnchor="middle"
-                    className="fill-zinc-600 text-[9px]"
+                    className="fill-zinc-400 text-[9px]"
                     style={{ fontFamily: "var(--font-geist-mono), ui-monospace, monospace" }}
                   >
                     {n.sub}
@@ -154,8 +154,8 @@ export function HeroGraphDemo() {
           </svg>
         </div>
       </div>
-      <p className="mt-3 text-center text-xs text-zinc-600">
-        Node outputs fan in and merge—same idea as your studio canvas.
+      <p className="mt-3 text-center text-xs text-zinc-500">
+        Node outputs fan in and merge—the same idea as your Studio canvas.
       </p>
     </div>
   );
