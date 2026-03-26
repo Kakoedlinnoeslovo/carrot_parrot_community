@@ -1,19 +1,24 @@
 import Link from "next/link";
 import { auth } from "@/auth";
-import { LikeButton } from "@/components/like-button";
+import { CommunityWorkflowCard } from "@/components/community-workflow-card";
+import { communityPreviewFromWorkflow } from "@/lib/community-preview";
 import { prisma } from "@/lib/db";
+import {
+  listPublishedWorkflowsForFeed,
+  type PublishedFeedSort,
+} from "@/lib/published-community-query";
 
-export default async function CommunityPage() {
+type PageProps = { searchParams: Promise<{ sort?: string }> };
+
+export default async function CommunityPage({ searchParams }: PageProps) {
+  const sp = await searchParams;
+  const sort: PublishedFeedSort = sp.sort === "trending" ? "trending" : "recent";
   const session = await auth();
 
-  const workflows = await prisma.workflow.findMany({
-    where: { visibility: "published", slug: { not: null } },
-    orderBy: { updatedAt: "desc" },
+  const workflows = await listPublishedWorkflowsForFeed({
+    sort,
     take: 36,
-    include: {
-      user: { select: { name: true, email: true } },
-      _count: { select: { likes: true } },
-    },
+    requireSlug: true,
   });
 
   const likedIds = new Set<string>();
@@ -28,41 +33,65 @@ export default async function CommunityPage() {
     for (const l of likes) likedIds.add(l.workflowId);
   }
 
+  const tabBase =
+    "rounded-full px-4 py-2 text-sm font-medium transition-[background-color,color,border-color] duration-300 ease-out";
+  const tabActive = "border border-orange-500/40 bg-orange-500/15 text-orange-200";
+  const tabIdle =
+    "border border-white/10 bg-white/[0.04] text-zinc-400 hover:border-white/15 hover:bg-white/[0.07] hover:text-zinc-200";
+
+  const withSlug = workflows.filter(
+    (w): w is (typeof w) & { slug: string } => typeof w.slug === "string" && w.slug.length > 0,
+  );
+
   return (
-    <div className="mx-auto max-w-4xl px-6 py-12">
-      <h1 className="text-2xl font-semibold text-zinc-100">Community</h1>
-      <p className="mt-2 text-sm text-zinc-400">
-        Published workflows — open a style, like it, or remix into your studio.
-      </p>
-
-      <ul className="mt-10 grid gap-4 sm:grid-cols-2">
-        {workflows.map((w) => (
-          <li
-            key={w.id}
-            className="rounded-xl border border-white/10 bg-white/[0.04] p-4 shadow-[0_20px_56px_-28px_rgba(0,0,0,0.65)] backdrop-blur-xl transition-[border-color,box-shadow] duration-300 ease-out hover:border-white/15 hover:shadow-[0_24px_64px_-28px_rgba(0,0,0,0.72)]"
+    <div className="mx-auto max-w-[1600px] px-4 py-10 md:px-8">
+      <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight text-zinc-100">Community</h1>
+          <p className="mt-2 max-w-xl text-sm text-zinc-400">
+            Published workflows — open a style, like it, or remix into your studio.
+          </p>
+          <p className="mt-1 text-xs text-zinc-500">{withSlug.length} workflow{withSlug.length !== 1 ? "s" : ""}</p>
+        </div>
+        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Sort workflows">
+          <Link
+            href="/community"
+            className={`${tabBase} ${sort === "recent" ? tabActive : tabIdle}`}
+            aria-current={sort === "recent" ? "page" : undefined}
           >
-            <Link href={`/w/${w.slug}`} className="block">
-              <h2 className="font-semibold text-zinc-100">{w.title ?? "Untitled"}</h2>
-              <p className="mt-1 line-clamp-2 text-sm text-zinc-400">
-                {w.description ?? "No description"}
-              </p>
-              <p className="mt-3 text-xs text-zinc-500">
-                {w.user.name ?? w.user.email?.split("@")[0] ?? "Creator"}
-              </p>
-            </Link>
-            <div className="mt-3 flex items-center gap-2">
-              <LikeButton
-                workflowId={w.id}
-                initialLiked={likedIds.has(w.id)}
-                initialCount={w._count.likes}
-              />
-            </div>
-          </li>
-        ))}
-      </ul>
+            Recent
+          </Link>
+          <Link
+            href="/community?sort=trending"
+            className={`${tabBase} ${sort === "trending" ? tabActive : tabIdle}`}
+            aria-current={sort === "trending" ? "page" : undefined}
+          >
+            Trending
+          </Link>
+        </div>
+      </div>
 
-      {workflows.length === 0 && (
-        <p className="mt-12 text-center text-zinc-400">
+      <div className="mt-10 columns-2 gap-4 sm:columns-3 lg:columns-4">
+        {withSlug.map((w, i) => (
+          <CommunityWorkflowCard
+            key={w.id}
+            workflowId={w.id}
+            slug={w.slug}
+            title={w.title}
+            preview={communityPreviewFromWorkflow(w.coverImageUrl, w.graphJson)}
+            authorName={w.user.name}
+            authorEmail={w.user.email}
+            authorImage={w.user.image}
+            likeCount={w._count.likes}
+            initialLiked={likedIds.has(w.id)}
+            isLoggedIn={!!session?.user}
+            index={i}
+          />
+        ))}
+      </div>
+
+      {withSlug.length === 0 && (
+        <p className="mt-16 text-center text-zinc-400">
           Nothing published yet. Publish from the studio.
         </p>
       )}

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AnalyticsEvent, track } from "@/lib/analytics";
 
-export function RemixButton({ workflowId }: { workflowId: string }) {
+export function RemixButton({ workflowId, className }: { workflowId: string; className?: string }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
 
@@ -23,12 +23,15 @@ export function RemixButton({ workflowId }: { workflowId: string }) {
     }
   }
 
+  const base =
+    "rounded-md border border-white/15 bg-white/5 px-3 py-1.5 text-sm font-medium text-zinc-100 transition-[background-color,border-color] duration-300 ease-out hover:border-white/25 hover:bg-white/10 disabled:opacity-50";
+
   return (
     <button
       type="button"
       disabled={pending}
       onClick={() => void remix()}
-      className="rounded-md border border-white/15 bg-white/5 px-3 py-1.5 text-sm font-medium text-zinc-100 transition-[background-color,border-color] duration-300 ease-out hover:border-white/25 hover:bg-white/10 disabled:opacity-50"
+      className={[base, className].filter(Boolean).join(" ")}
     >
       {pending ? "…" : "Remix"}
     </button>

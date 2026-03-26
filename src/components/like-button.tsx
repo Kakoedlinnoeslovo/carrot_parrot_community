@@ -8,10 +8,12 @@ export function LikeButton({
   workflowId,
   initialLiked,
   initialCount,
+  className,
 }: {
   workflowId: string;
   initialLiked: boolean;
   initialCount: number;
+  className?: string;
 }) {
   const router = useRouter();
   const [liked, setLiked] = useState(initialLiked);
@@ -32,11 +34,14 @@ export function LikeButton({
     router.refresh();
   }
 
+  const base =
+    "rounded-md border border-white/15 bg-white/5 px-2 py-1 text-xs font-medium text-zinc-200 transition-[background-color,border-color] duration-300 ease-out hover:border-white/25 hover:bg-white/10";
+
   return (
     <button
       type="button"
       onClick={() => void toggle()}
-      className="rounded-md border border-white/15 bg-white/5 px-2 py-1 text-xs font-medium text-zinc-200 transition-[background-color,border-color] duration-300 ease-out hover:border-white/25 hover:bg-white/10"
+      className={[base, className].filter(Boolean).join(" ")}
     >
       {liked ? "♥" : "♡"} {count}
     </button>

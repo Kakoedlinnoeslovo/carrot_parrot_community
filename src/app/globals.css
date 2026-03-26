@@ -151,3 +151,25 @@ body {
     animation: none !important;
   }
 }
+
+/* Community masonry cards: staggered fade-up (GPU-friendly) */
+@keyframes community-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.community-card-enter {
+  animation: community-card-enter 0.55s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .community-card-enter {
+    animation: none !important;
+  }
+}

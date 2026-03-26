@@ -17,6 +17,7 @@ import {
   Position,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import Link from "next/link";
 import { nanoid } from "nanoid";
 import { graphToFlow, flowToGraph } from "@/lib/flow-adapter";
 import type { WorkflowGraph } from "@/lib/workflow-graph";
@@ -29,6 +30,13 @@ import {
   orderOutputHandleKeys,
 } from "@/lib/fal-schema-handles";
 import { AnalyticsEvent, track } from "@/lib/analytics";
+
+/** True when the server rejected a request because no fal.ai key is configured for this user. */
+function responseIndicatesMissingFalKey(status: number, errorText: string | undefined): boolean {
+  if (status === 401) return true;
+  const m = errorText ?? "";
+  return /fal\.ai API key|Add your fal\.ai|No fal\.ai API key/i.test(m);
+}
 
 const DEFAULT_OUTPUT_HANDLE_KEYS = ["out", "images", "text", "media"] as const;
 
@@ -717,6 +725,7 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
   const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
   const detailRequestedRef = useRef<Set<string>>(new Set());
   const runTerminalLoggedRef = useRef<string | null>(null);
+  const [falKeyBanner, setFalKeyBanner] = useState(false);
 
   useEffect(() => {
     setOrigin(window.location.origin);
@@ -816,11 +825,19 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
     const t = setTimeout(() => {
       setModelSearchLoading(true);
       fetch(`/api/fal/models?q=${encodeURIComponent(modelQuery)}&limit=20`)
-        .then((r) => r.json())
-        .then((j: { models?: FalModelHit[] }) => {
+        .then(async (r) => {
+          const j = (await r.json()) as { models?: FalModelHit[]; error?: string };
+          if (responseIndicatesMissingFalKey(r.status, j.error)) {
+            setFalKeyBanner(true);
+            setModelHits([]);
+            return;
+          }
+          setFalKeyBanner(false);
           setModelHits(Array.isArray(j.models) ? j.models : []);
         })
-        .catch(() => setModelHits([]))
+        .catch(() => {
+          setModelHits([]);
+        })
         .finally(() => setModelSearchLoading(false));
     }, 280);
     return () => clearTimeout(t);
@@ -846,6 +863,9 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
             error?: string;
           };
           if (!r.ok) {
+            if (responseIndicatesMissingFalKey(r.status, j.error)) {
+              setFalKeyBanner(true);
+            }
             setDetailErrors((prev) => ({ ...prev, [id]: j.error ?? r.statusText }));
             setDetailByEndpoint((prev) => ({ ...prev, [id]: { input: null, output: null } }));
             return;
@@ -1073,6 +1093,9 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
     });
     const j = (await res.json()) as { runId?: string; error?: string };
     if (!res.ok) {
+      if (responseIndicatesMissingFalKey(res.status, j.error)) {
+        setFalKeyBanner(true);
+      }
       setRunStatus("failed");
       setRunError(j.error ?? "Run failed");
       track(AnalyticsEvent.workflowRunComplete, { workflowId, status: "failed" });
@@ -1105,7 +1128,31 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
     (!detailSchema || Boolean(detailError));
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] flex-col md:flex-row">
+    <div className="flex h-[calc(100vh-3.5rem)] flex-col">
+      {falKeyBanner ? (
+        <div
+          className="shrink-0 border-b border-amber-500/40 bg-amber-950/60 px-4 py-3 text-center text-sm text-amber-100"
+          role="status"
+        >
+          <Link
+            href="/settings/fal-key"
+            className="font-semibold text-amber-300 underline-offset-4 hover:underline"
+          >
+            Set up your fal.ai API key
+          </Link>{" "}
+          to search models, upload images, and run workflows. Create one in the{" "}
+          <a
+            href="https://fal.ai/dashboard/keys"
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-amber-300/90 underline-offset-4 hover:underline"
+          >
+            fal dashboard
+          </a>
+          .
+        </div>
+      ) : null}
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       <div className="relative min-h-[360px] flex-1">
         <ReactFlow
           nodes={nodesForFlow}
@@ -1488,6 +1535,7 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
           )}
         </div>
       </aside>
+      </div>
     </div>
   );
 }
