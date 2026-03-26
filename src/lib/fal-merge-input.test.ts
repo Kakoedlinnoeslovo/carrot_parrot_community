@@ -29,9 +29,9 @@ describe("sanitizeFalInput", () => {
 });
 
 describe("mergeFalInput", () => {
-  it("legacy edge to in merges prompt", () => {
+  it("explicit prompt handle merges text input", () => {
     const g = graph([
-      { id: "e1", source: "p1", target: "m1", sourceHandle: "prompt", targetHandle: null },
+      { id: "e1", source: "p1", target: "m1", sourceHandle: "prompt", targetHandle: "prompt" },
     ]);
     const out = mergeFalInput(g.nodes[1] as Extract<(typeof g.nodes)[1], { type: "fal_model" }>, g, {
       p1: { text: "hello", images: [] },
@@ -51,7 +51,7 @@ describe("mergeFalInput", () => {
     expect(out.prompt).toBe("direct");
   });
 
-  it("treats response_url source like finished media (not queue API URL)", () => {
+  it("out → image_url passes prior step media into flux", () => {
     const g: WorkflowGraph = {
       nodes: [
         {
@@ -72,8 +72,8 @@ describe("mergeFalInput", () => {
           id: "e1",
           source: "a",
           target: "b",
-          sourceHandle: "response_url",
-          targetHandle: null,
+          sourceHandle: "out",
+          targetHandle: "image_url",
         },
       ],
     };
@@ -83,7 +83,7 @@ describe("mergeFalInput", () => {
     expect(out.image_url).toBe("https://cdn.example.com/out.png");
   });
 
-  it("legacy in fills start_image_url for kling image-to-video (not image_url)", () => {
+  it("out → start_image_url for kling image-to-video", () => {
     const g: WorkflowGraph = {
       nodes: [
         {
@@ -102,7 +102,9 @@ describe("mergeFalInput", () => {
           position: { x: 0, y: 0 },
         },
       ],
-      edges: [{ id: "e1", source: "a", target: "b", sourceHandle: "images", targetHandle: null }],
+      edges: [
+        { id: "e1", source: "a", target: "b", sourceHandle: "out", targetHandle: "start_image_url" },
+      ],
     };
     const out = mergeFalInput(g.nodes[1] as Extract<(typeof g.nodes)[1], { type: "fal_model" }>, g, {
       a: { images: ["https://cdn.example.com/frame.png"], media: [] },

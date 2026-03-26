@@ -85,6 +85,46 @@ export function extractImageUrlsFromFalData(data: unknown): string[] {
     .map((m) => m.url);
 }
 
+/**
+ * Plain-text completion from fal queue / webhook payloads (VLMs, LLMs).
+ * e.g. openrouter/router/vision returns `{ output: string, usage: ... }` with no media URLs.
+ */
+export function extractTextFromFalData(data: unknown): string | undefined {
+  if (data == null) return undefined;
+  if (typeof data === "string") {
+    const t = data.trim();
+    return t || undefined;
+  }
+  if (typeof data !== "object" || Array.isArray(data)) return undefined;
+  const o = data as Record<string, unknown>;
+
+  if (typeof o.output === "string") {
+    const t = o.output.trim();
+    if (t) return t;
+  }
+  if (typeof o.text === "string") {
+    const t = o.text.trim();
+    if (t) return t;
+  }
+
+  if (o.data != null && typeof o.data === "object" && !Array.isArray(o.data)) {
+    const inner = extractTextFromFalData(o.data);
+    if (inner) return inner;
+  }
+
+  const choices = o.choices;
+  if (Array.isArray(choices) && choices[0] != null && typeof choices[0] === "object") {
+    const c0 = choices[0] as Record<string, unknown>;
+    const msg = c0.message;
+    if (msg != null && typeof msg === "object" && !Array.isArray(msg)) {
+      const content = (msg as Record<string, unknown>).content;
+      if (typeof content === "string" && content.trim()) return content.trim();
+    }
+  }
+
+  return undefined;
+}
+
 async function runHostedWorkflowStep(
   fal: FalClient,
   runId: string,
@@ -218,6 +258,7 @@ async function pollFalUntilComplete(
     const res = await fal.queue.result(endpointId, { requestId });
     const media = extractMediaFromFalData(res.data);
     const images = media.filter((m) => m.kind === "image" || m.kind === "unknown").map((m) => m.url);
+    const text = extractTextFromFalData(res.data);
 
     const step = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
     if (!step || step.status === "succeeded") {
@@ -229,7 +270,7 @@ async function pollFalUntilComplete(
       data: {
         status: "succeeded",
         outputsJson: JSON.stringify({
-          text: undefined,
+          text: text || undefined,
           images,
           media,
         } satisfies Artifact),
@@ -659,8 +700,9 @@ export async function handleFalWebhook(runId: string, stepId: string, body: unkn
 
   const media = extractMediaFromFalData(payload);
   const images = media.filter((m) => m.kind === "image" || m.kind === "unknown").map((m) => m.url);
+  const text = extractTextFromFalData(payload);
 
-  if (media.length === 0 && b?.status !== "OK") {
+  if (media.length === 0 && text == null && b?.status !== "OK") {
     if (process.env.NODE_ENV === "development") {
       console.warn("[fal webhook] Unrecognized body; keys:", body && typeof body === "object" ? Object.keys(body) : []);
     }
@@ -677,7 +719,7 @@ export async function handleFalWebhook(runId: string, stepId: string, body: unkn
     data: {
       status: "succeeded",
       outputsJson: JSON.stringify({
-        text: undefined,
+        text: text || undefined,
         images,
         media,
       } satisfies Artifact),

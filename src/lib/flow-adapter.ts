@@ -1,7 +1,6 @@
 import type { Edge, Node } from "@xyflow/react";
-import { isQueueInfraOutputKey } from "@/lib/fal-schema-handles";
 import type { WorkflowGraph } from "@/lib/workflow-graph";
-import { workflowGraphSchema } from "@/lib/workflow-graph";
+import { migrateWorkflowGraphEdges, workflowGraphSchema } from "@/lib/workflow-graph";
 
 const DEFAULT_FAL_MODEL = "fal-ai/flux/schnell";
 const DEFAULT_FAL_INPUT: Record<string, unknown> = {
@@ -9,26 +8,10 @@ const DEFAULT_FAL_INPUT: Record<string, unknown> = {
   num_images: 1,
 };
 
-/**
- * Older graphs wired fal_model outputs using OpenAPI queue fields (e.g. response_url). We no longer
- * render those as source handles (they are not real artifact URLs). Remap to "out" so React Flow
- * can resolve the edge and mergeFalInput still treats those aliases like finished media.
- */
-function normalizeEdgesForReactFlowHandles(graph: WorkflowGraph): WorkflowGraph["edges"] {
-  const typeById = new Map(graph.nodes.map((n) => [n.id, n.type]));
-  return graph.edges.map((e) => {
-    const sh = e.sourceHandle;
-    if (sh && typeById.get(e.source) === "fal_model" && isQueueInfraOutputKey(sh)) {
-      return { ...e, sourceHandle: "out" };
-    }
-    return e;
-  });
-}
-
 export function graphToFlow(graph: WorkflowGraph): { nodes: Node[]; edges: Edge[] } {
-  const edgesNorm = normalizeEdgesForReactFlowHandles(graph);
+  const g = migrateWorkflowGraphEdges(graph);
   return {
-    nodes: graph.nodes.map((n) => {
+    nodes: g.nodes.map((n) => {
       if (n.type === "input_prompt") {
         return {
           id: n.id,
@@ -71,7 +54,7 @@ export function graphToFlow(graph: WorkflowGraph): { nodes: Node[]; edges: Edge[
         },
       };
     }),
-    edges: edgesNorm.map((e) => ({
+    edges: g.edges.map((e) => ({
       id: e.id,
       source: e.source,
       target: e.target,
@@ -149,5 +132,5 @@ export function flowToGraph(nodes: Node[], edges: Edge[]): WorkflowGraph {
     targetHandle: e.targetHandle ?? null,
   }));
   const graph = { nodes: wNodes, edges: wEdges };
-  return workflowGraphSchema.parse(graph);
+  return migrateWorkflowGraphEdges(workflowGraphSchema.parse(graph));
 }

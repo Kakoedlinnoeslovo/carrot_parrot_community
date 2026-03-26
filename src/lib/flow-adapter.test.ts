@@ -26,7 +26,7 @@ describe("graphToFlow", () => {
     expect(edges[0]?.sourceHandle).toBe("out");
   });
 
-  it("leaves non-queue fal sourceHandle unchanged", () => {
+  it("remaps images sourceHandle to out (single artifact port)", () => {
     const { edges } = graphToFlow({
       nodes: [
         {
@@ -47,6 +47,6 @@ describe("graphToFlow", () => {
         },
       ],
     });
-    expect(edges[0]?.sourceHandle).toBe("images");
+    expect(edges[0]?.sourceHandle).toBe("out");
   });
 });

@@ -24,11 +24,7 @@ import type { WorkflowGraph } from "@/lib/workflow-graph";
 import { FAL_WORKFLOW_TEMPLATES } from "@/lib/fal-workflow-templates";
 import { FalModelForm } from "@/components/fal-model-form";
 import type { RJSFSchema } from "@rjsf/utils";
-import {
-  listMappableInputKeysFromSchema,
-  listMappableOutputKeysFromSchema,
-  orderOutputHandleKeys,
-} from "@/lib/fal-schema-handles";
+import { listMappableInputKeysFromSchema } from "@/lib/fal-schema-handles";
 import { AnalyticsEvent, track } from "@/lib/analytics";
 
 /** True when the server rejected a request because no fal.ai key is configured for this user. */
@@ -38,7 +34,8 @@ function responseIndicatesMissingFalKey(status: number, errorText: string | unde
   return /fal\.ai API key|Add your fal\.ai|No fal\.ai API key/i.test(m);
 }
 
-const DEFAULT_OUTPUT_HANDLE_KEYS = ["out", "images", "text", "media"] as const;
+/** Single source port: full step artifact (optional caption text + media URLs). */
+const FAL_OUTPUT_HANDLES = ["out"] as const;
 
 /** Shared classes: larger grab area, hover affordance (visual size set per node + globals). */
 const FLOW_HANDLE_BASE =
@@ -65,10 +62,11 @@ function inferSourceWireKind(
   }
   if (n.type === "fal_model") {
     const h = sourceHandle ?? "";
+    // `out` is the full step artifact (caption text and/or media URLs). Do not tag it as `image` or
+    // isWorkflowConnectionValid blocks out → explicit `prompt` / text targets.
     if (
       h === "images" ||
       h === "image" ||
-      h === "out" ||
       /^(video|videos|audio|media|data)$/i.test(h)
     ) {
       return "image";
@@ -79,18 +77,18 @@ function inferSourceWireKind(
   return "any";
 }
 
-/** What the target port expects; `legacy` = fal "in" merge accepts mixed inputs. */
+/** What the target port expects for connection validation. */
 function inferTargetWireExpectation(
   nodes: Node[],
   target: string,
   targetHandle: string | null | undefined,
-): "legacy" | WireKind {
+): WireKind {
   const n = nodes.find((x) => x.id === target);
   if (!n) return "any";
   if (n.type === "output_preview") return "image";
   if (n.type !== "fal_model") return "any";
-  const h = targetHandle ?? "in";
-  if (h === "in") return "legacy";
+  const h = targetHandle ?? "";
+  if (!h.trim()) return "any";
 
   const imageField =
     /^(image_url|image_urls|model_image|garment_image|mask_url|video_url|audio_url)$/i.test(h) ||
@@ -109,12 +107,16 @@ function isWorkflowConnectionValid(nodes: Node[], conn: Connection | Edge): bool
   const target = conn.target;
   if (source === target) return false;
 
-  const sh = conn.sourceHandle ?? null;
+  const tgtNode = nodes.find((x) => x.id === target);
   const th = conn.targetHandle ?? null;
+  if (tgtNode?.type === "fal_model" && (!th || !String(th).trim())) {
+    return false;
+  }
+
+  const sh = conn.sourceHandle ?? null;
 
   const srcKind = inferSourceWireKind(nodes, source, sh);
   const want = inferTargetWireExpectation(nodes, target, th);
-  if (want === "legacy") return true;
   if (want === "any" || srcKind === "any") return true;
   if (want === "image" && srcKind === "text") return false;
   if (want === "text" && srcKind === "image") return false;
@@ -138,7 +140,7 @@ function InputPromptNode({ id, data }: NodeProps) {
           position={Position.Right}
           id="prompt"
           className={`${FLOW_HANDLE_BASE} !absolute !right-0 !top-1/2 !-translate-y-1/2 !border-emerald-500/35 !bg-emerald-500`}
-          title='sourceHandle="prompt" — wire to fal target "prompt" (not "in") for that field'
+          title='sourceHandle="prompt" — connect to the fal node’s left port named prompt'
         />
       </div>
     </div>
@@ -508,7 +510,6 @@ function FalModelNode({ id, data }: NodeProps) {
     falModelId?: string;
     falInput?: Record<string, unknown>;
     _inputHandleKeys?: string[];
-    _outputHandleKeys?: string[];
     _runStepStatus?: string;
   };
   const stepStatus = d._runStepStatus;
@@ -519,8 +520,7 @@ function FalModelNode({ id, data }: NodeProps) {
       ? d.falInput.prompt
       : JSON.stringify(d.falInput ?? {}).slice(0, 120);
   const inputKeys = d._inputHandleKeys ?? [];
-  const outputKeys =
-    d._outputHandleKeys?.length ? d._outputHandleKeys : [...DEFAULT_OUTPUT_HANDLE_KEYS];
+  const outputKeys = [...FAL_OUTPUT_HANDLES];
   const rowClass = "relative flex min-h-[22px] w-full items-center gap-0";
   const handleOffset = "left-[-1px]";
   return (
@@ -556,17 +556,6 @@ function FalModelNode({ id, data }: NodeProps) {
             Inputs (API field name = wire target)
           </div>
           <div className="flex flex-col gap-0.5">
-            <div className={rowClass}>
-              <Handle
-                type="target"
-                position={Position.Left}
-                id="in"
-                className={`${FLOW_HANDLE_BASE} !absolute ${handleOffset} !top-1/2 !-translate-y-1/2 !border-amber-400/50 !bg-amber-400`}
-                title="targetHandle omitted or in: merge upstream text into prompt and URLs into image_url / image_urls"
-              />
-              <span className="ml-4 font-mono text-[10px] leading-tight text-amber-200/90">in</span>
-              <span className="ml-1 text-[9px] text-zinc-500">legacy merge</span>
-            </div>
             {inputKeys.map((key) => (
               <div key={key} className={rowClass}>
                 <Handle
@@ -581,8 +570,8 @@ function FalModelNode({ id, data }: NodeProps) {
             ))}
             {inputKeys.length === 0 ? (
               <p className="pl-4 text-[9px] leading-snug text-zinc-600">
-                No OpenAPI input schema yet. Use <span className="font-mono">in</span> or set fields in
-                the sidebar.
+                No OpenAPI input schema yet. Set fields in the sidebar or connect upstream nodes to named
+                inputs.
               </p>
             ) : null}
           </div>
@@ -593,20 +582,32 @@ function FalModelNode({ id, data }: NodeProps) {
             Outputs (source handle)
           </div>
           <p className="mb-1.5 text-[8px] leading-snug text-zinc-600">
-            Use <span className="font-mono text-zinc-500">images</span> or{" "}
-            <span className="font-mono text-zinc-500">out</span> for the finished file URLs — not queue
-            API links.
+            <span className="rounded bg-zinc-800 px-1 font-mono text-zinc-400">out</span>{" "}
+            <span className="text-zinc-500">
+              type: <strong className="text-zinc-400">text + URLs</strong> — connects to the next model’s
+            </span>{" "}
+            <span className="font-mono text-amber-200/80">prompt</span>
+            <span className="text-zinc-500"> (caption), </span>
+            <span className="font-mono text-amber-200/80">image_url</span>
+            <span className="text-zinc-500"> / </span>
+            <span className="font-mono text-amber-200/80">image_urls</span>
+            <span className="text-zinc-500"> / </span>
+            <span className="font-mono text-amber-200/80">start_image_url</span>
+            <span className="text-zinc-500">, etc., by field name.</span>
           </p>
           <div className="flex flex-col gap-0.5">
             {outputKeys.map((key) => (
               <div key={key} className={`${rowClass} justify-end`}>
-                <span className="mr-3 font-mono text-[10px] leading-tight text-zinc-200">{key}</span>
+                <div className="mr-2 flex min-w-0 flex-1 flex-col items-end gap-0.5">
+                  <span className="font-mono text-[10px] leading-tight text-zinc-200">{key}</span>
+                  <span className="text-[8px] leading-tight text-zinc-500">text + media URLs</span>
+                </div>
                 <Handle
                   type="source"
                   position={Position.Right}
                   id={key}
                   className={`${FLOW_HANDLE_BASE} !absolute !right-[-1px] !top-1/2 !-translate-y-1/2 !border-amber-500/45 !bg-amber-500`}
-                  title={`sourceHandle="${key}"` + (key === "out" ? " (full artifact)" : "")}
+                  title='sourceHandle="out" — full run artifact: optional caption string plus any image/video/audio URLs (maps to the input field you wire to)'
                 />
               </div>
             ))}
@@ -794,18 +795,12 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
         const mid = String((n.data as { falModelId?: string }).falModelId ?? "").trim();
         const detail = mid ? detailByEndpoint[mid] : undefined;
         const inputKeys = listMappableInputKeysFromSchema(detail?.input ?? null);
-        const outFromSchema = listMappableOutputKeysFromSchema(detail?.output ?? null);
-        const outputKeysFinal =
-          outFromSchema.length > 0
-            ? orderOutputHandleKeys([...new Set([...outFromSchema, "out", "images"])])
-            : [...DEFAULT_OUTPUT_HANDLE_KEYS];
         const stepSt = runInProgress ? runStepByNodeId[n.id] : undefined;
         return {
           ...n,
           data: {
             ...(n.data as Record<string, unknown>),
             _inputHandleKeys: inputKeys,
-            _outputHandleKeys: outputKeysFinal,
             ...(stepSt ? { _runStepStatus: stepSt } : {}),
           },
         };

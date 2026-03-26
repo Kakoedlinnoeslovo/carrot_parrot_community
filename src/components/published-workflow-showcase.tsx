@@ -21,7 +21,7 @@ import type { GraphMediaHint } from "@/lib/graph-media-hints";
 import type { PublishedExemplarRow, PublishedPreviewItem } from "@/lib/published-exemplar";
 import type { WorkflowGraph } from "@/lib/workflow-graph";
 
-const DEFAULT_OUTPUT_HANDLE_KEYS = ["out", "images", "text", "media"] as const;
+const PUBLISHED_FAL_OUTPUT_HANDLES = ["out"] as const;
 
 const FLOW_HANDLE_PUBLISHED =
   "!pointer-events-none !h-2.5 !w-2.5 !rounded-sm !border !border-white/20 !bg-white/40";
@@ -36,30 +36,22 @@ function enrichPublishedNodes(
   exemplarByNodeId: Record<string, PublishedPreviewItem[]>,
 ): Node[] {
   const incomingByTarget = new Map<string, Set<string>>();
-  const outgoingBySource = new Map<string, Set<string>>();
   for (const e of edges) {
-    const th = e.targetHandle == null || e.targetHandle === "" ? "in" : e.targetHandle;
+    const th = (e.targetHandle ?? "").trim() || "prompt";
     if (!incomingByTarget.has(e.target)) incomingByTarget.set(e.target, new Set());
     incomingByTarget.get(e.target)!.add(th);
-    const sh = e.sourceHandle;
-    if (sh) {
-      if (!outgoingBySource.has(e.source)) outgoingBySource.set(e.source, new Set());
-      outgoingBySource.get(e.source)!.add(sh);
-    }
   }
 
   return nodes.map((n) => {
     if (n.type === "fal_model") {
       const inc = [...(incomingByTarget.get(n.id) ?? [])];
-      const inputKeys = inc.filter((h) => h !== "in");
-      const outExtra = [...(outgoingBySource.get(n.id) ?? [])];
-      const mergedOut = [...new Set([...DEFAULT_OUTPUT_HANDLE_KEYS, ...outExtra])];
+      const inputKeys = inc.filter((h) => h && h !== "in");
       return {
         ...n,
         data: {
           ...(n.data as object),
           _inputHandleKeys: inputKeys,
-          _outputHandleKeys: mergedOut,
+          _outputHandleKeys: [...PUBLISHED_FAL_OUTPUT_HANDLES],
         },
       };
     }
@@ -223,7 +215,7 @@ function PublishedFalModelNode({ data }: NodeProps) {
   const outputKeys =
     d._outputHandleKeys && d._outputHandleKeys.length > 0
       ? d._outputHandleKeys
-      : [...DEFAULT_OUTPUT_HANDLE_KEYS];
+      : [...PUBLISHED_FAL_OUTPUT_HANDLES];
 
   const rowClass = "relative flex min-h-[20px] w-full items-center";
 
@@ -237,15 +229,6 @@ function PublishedFalModelNode({ data }: NodeProps) {
       <div className="flex gap-2 border-t border-white/10 pt-2">
         <div className="min-w-0 flex-1">
           <div className="mb-1 text-[9px] font-semibold uppercase text-zinc-500">In</div>
-          <div className={rowClass}>
-            <Handle
-              type="target"
-              position={Position.Left}
-              id="in"
-              className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-[-1px] !top-1/2 !-translate-y-1/2 !bg-amber-400/90`}
-            />
-            <span className="ml-3 font-mono text-[9px] text-amber-100/90">in</span>
-          </div>
           {inputKeys.map((key) => (
             <div key={key} className={rowClass}>
               <Handle
@@ -260,6 +243,9 @@ function PublishedFalModelNode({ data }: NodeProps) {
         </div>
         <div className="min-w-0 flex-1 border-l border-white/10 pl-2">
           <div className="mb-1 text-[9px] font-semibold uppercase text-zinc-500">Out</div>
+          <p className="mb-1 text-[8px] leading-snug text-zinc-600">
+            <span className="font-mono text-zinc-400">out</span>: text + media URLs
+          </p>
           <div className="flex flex-col gap-0.5">
             {outputKeys.map((key) => (
               <div key={key} className={`${rowClass} justify-end`}>
