@@ -94,6 +94,36 @@ describe("mergeFalInput", () => {
     expect(out.image_url).toBe("https://cdn.example.com/out.png");
   });
 
+  it("out → image_url for Kling AI Avatar", () => {
+    const g: WorkflowGraph = {
+      nodes: [
+        {
+          id: "a",
+          type: "fal_model",
+          data: { falModelId: "fal-ai/x", falInput: {} },
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "b",
+          type: "fal_model",
+          data: {
+            falModelId: "fal-ai/kling-video/ai-avatar/v2/pro",
+            falInput: {},
+          },
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [
+        { id: "e1", source: "a", target: "b", sourceHandle: "out", targetHandle: "image_url" },
+      ],
+    };
+    const out = mergeFalInput(g.nodes[1] as Extract<(typeof g.nodes)[1], { type: "fal_model" }>, g, {
+      a: { images: ["https://cdn.example.com/portrait.png"], media: [] },
+    });
+    expect(out.image_url).toBe("https://cdn.example.com/portrait.png");
+    expect(out.start_image_url).toBeUndefined();
+  });
+
   it("out → start_image_url for kling image-to-video", () => {
     const g: WorkflowGraph = {
       nodes: [

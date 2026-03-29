@@ -24,7 +24,8 @@ import type { WorkflowGraph } from "@/lib/workflow-graph";
 import { FAL_WORKFLOW_TEMPLATES } from "@/lib/fal-workflow-templates";
 import { FalModelForm } from "@/components/fal-model-form";
 import type { RJSFSchema } from "@rjsf/utils";
-import { listMappableInputKeysFromSchema } from "@/lib/fal-schema-handles";
+import { computePrimaryImageInputKey } from "@/lib/fal-openapi-wiring";
+import { listMappableInputKeysFromSchema, listMappableOutputKeysFromSchema } from "@/lib/fal-schema-handles";
 import { AnalyticsEvent, track } from "@/lib/analytics";
 
 /** True when the server rejected a request because no fal.ai key is configured for this user. */
@@ -878,6 +879,42 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
     }
   }, [nodes]);
 
+  /** Persist OpenAPI-derived wiring hints on fal_model nodes so migration and runs do not rely on endpoint-id heuristics. */
+  useEffect(() => {
+    setNodes((nds) => {
+      let changed = false;
+      const next = nds.map((n) => {
+        if (n.type !== "fal_model") return n;
+        const mid = String((n.data as { falModelId?: string }).falModelId ?? "").trim();
+        if (!mid) return n;
+        const detail = detailByEndpoint[mid];
+        if (!detail || (detail.input == null && detail.output == null)) return n;
+        const d = { ...(n.data as Record<string, unknown>) };
+        const inputSchema =
+          detail.input && typeof detail.input === "object"
+            ? (detail.input as Record<string, unknown>)
+            : null;
+        const openapiInputKeys = listMappableInputKeysFromSchema(detail.input ?? null);
+        const openapiOutputKeys = listMappableOutputKeysFromSchema(detail.output ?? null);
+        const primaryImageInputKey = inputSchema ? computePrimaryImageInputKey(inputSchema) : undefined;
+
+        const sameKeys =
+          JSON.stringify(d.openapiInputKeys) === JSON.stringify(openapiInputKeys) &&
+          JSON.stringify(d.openapiOutputKeys) === JSON.stringify(openapiOutputKeys) &&
+          d.primaryImageInputKey === primaryImageInputKey;
+        if (sameKeys) return n;
+
+        changed = true;
+        d.openapiInputKeys = openapiInputKeys;
+        d.openapiOutputKeys = openapiOutputKeys;
+        if (primaryImageInputKey) d.primaryImageInputKey = primaryImageInputKey;
+        else delete d.primaryImageInputKey;
+        return { ...n, data: d };
+      });
+      return changed ? next : nds;
+    });
+  }, [detailByEndpoint, setNodes]);
+
   const detailSchema =
     selectedFalModelId && selectedNode?.type === "fal_model"
       ? detailByEndpoint[selectedFalModelId]?.input ?? null
@@ -1497,7 +1534,13 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
                           track(AnalyticsEvent.falModelSelected, {
                             endpointId: m.endpoint_id.slice(0, 96),
                           });
-                          updateSelectedData({ falModelId: m.endpoint_id, falInput: {} });
+                          updateSelectedData({
+                            falModelId: m.endpoint_id,
+                            falInput: {},
+                            openapiInputKeys: undefined,
+                            openapiOutputKeys: undefined,
+                            primaryImageInputKey: undefined,
+                          });
                         }}
                       >
                         <span className="font-mono text-orange-300">{m.endpoint_id}</span>

@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  inferPrimaryImageInputKeyFromKeyList,
+  isOutputPrimarilyTextual,
+  pickFirstTextInputKey,
+} from "@/lib/fal-openapi-wiring";
 import { isQueueInfraOutputKey } from "@/lib/fal-schema-handles";
 
 const falEndpointIdSchema = z
@@ -26,6 +31,11 @@ const falModelDataSchema = z.preprocess((raw) => {
   falModelId: falEndpointIdSchema,
   falInput: z.record(z.string(), z.unknown()),
   prompt: z.string().optional(),
+  /** From OpenAPI listMappableInputKeysFromSchema — drives legacy edge migration and handles. */
+  openapiInputKeys: z.array(z.string()).optional(),
+  openapiOutputKeys: z.array(z.string()).optional(),
+  /** Computed from input schema (audio + image_url vs start_image_url, etc.). */
+  primaryImageInputKey: z.string().optional(),
 }));
 
 const inputSlotSchema = z.object({
@@ -118,11 +128,11 @@ function isLegacyFalTarget(th: string | null | undefined): boolean {
 }
 
 function pickImageInputKeyForTarget(tgt: WorkflowNode & { type: "fal_model" }): string {
-  const eid = String(tgt.data.falModelId ?? "").toLowerCase();
-  if (eid.includes("image-to-video") || eid.includes("kling-video") || eid.includes("kling")) {
-    return "start_image_url";
+  const d = tgt.data;
+  if (typeof d.primaryImageInputKey === "string" && d.primaryImageInputKey.trim()) {
+    return d.primaryImageInputKey.trim();
   }
-  return "image_url";
+  return inferPrimaryImageInputKeyFromKeyList(d.openapiInputKeys);
 }
 
 /** Best-effort explicit fal input for edges that used legacy `in` / missing targetHandle. */
@@ -146,21 +156,26 @@ function inferLegacyTargetHandle(graph: WorkflowGraph, edge: WorkflowEdge): stri
     if (sh && isQueueInfraOutputKey(sh)) sh = "out";
     if (sh === "images" || sh === "media") return pickImageInputKeyForTarget(tgt);
     if (sh === "text") return "prompt";
-    const tgtId = String(tgt.data.falModelId ?? "").toLowerCase();
     if (sh === "out" || sh === "") {
-      if (
-        tgtId.includes("image-to-video") ||
-        tgtId.includes("kling-video") ||
-        (tgtId.includes("reference") && tgtId.includes("video")) ||
-        tgtId.includes("/video/")
-      ) {
+      const srcData = src.data as {
+        openapiOutputKeys?: string[];
+      };
+      const tgtData = tgt.data as {
+        openapiInputKeys?: string[];
+        primaryImageInputKey?: string;
+      };
+      if (isOutputPrimarilyTextual(srcData.openapiOutputKeys)) {
+        return pickFirstTextInputKey(tgtData.openapiInputKeys);
+      }
+      const tgtKeys = tgtData.openapiInputKeys;
+      const hasRasterIn = tgtKeys?.some((k) =>
+        /image|frame|mask|start_image|garment|model_|reference/i.test(k),
+      );
+      if (hasRasterIn) {
         return pickImageInputKeyForTarget(tgt);
       }
-      if (tgtId.includes("openrouter") || tgtId.includes("/vision") || tgtId.includes("vlm")) {
-        return "prompt";
-      }
-      // Typical fal → fal chain: prior image into img2img / edit / still generation
-      return "image_url";
+      // Typical fal → fal: prior image into img2img / edit — default raster field
+      return pickImageInputKeyForTarget(tgt);
     }
     return "prompt";
   }
