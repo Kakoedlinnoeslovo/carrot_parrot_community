@@ -201,6 +201,104 @@ describe("mergeFalInput", () => {
     expect(out.audio_url).toBe("https://v3.fal.media/files/rabbit/tts_output.mp3");
   });
 
+  it("two input_image edges → image_urls accumulates both URLs in edge order", () => {
+    const g: WorkflowGraph = {
+      nodes: [
+        {
+          id: "imgA",
+          type: "input_image",
+          data: { imageUrl: "https://cdn.example.com/portrait.jpg" },
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "imgB",
+          type: "input_image",
+          data: { imageUrl: "https://cdn.example.com/prop.jpg" },
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "nano",
+          type: "fal_model",
+          data: {
+            falModelId: "fal-ai/nano-banana-2/edit",
+            falInput: { prompt: "combine" },
+          },
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [
+        {
+          id: "e1",
+          source: "imgA",
+          target: "nano",
+          sourceHandle: "image",
+          targetHandle: "image_urls",
+        },
+        {
+          id: "e2",
+          source: "imgB",
+          target: "nano",
+          sourceHandle: "image",
+          targetHandle: "image_urls",
+        },
+      ],
+    };
+    const out = mergeFalInput(g.nodes[2] as Extract<(typeof g.nodes)[2], { type: "fal_model" }>, g, {});
+    expect(out.image_urls).toEqual([
+      "https://cdn.example.com/portrait.jpg",
+      "https://cdn.example.com/prop.jpg",
+    ]);
+  });
+
+  it("first wire to image_urls replaces static falInput preset; second wire appends", () => {
+    const g: WorkflowGraph = {
+      nodes: [
+        {
+          id: "imgA",
+          type: "input_image",
+          data: { imageUrl: "https://cdn.example.com/a.jpg" },
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "imgB",
+          type: "input_image",
+          data: { imageUrl: "https://cdn.example.com/b.jpg" },
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "m",
+          type: "fal_model",
+          data: {
+            falModelId: "fal-ai/nano-banana-2/edit",
+            falInput: { image_urls: ["https://cdn.example.com/static-only.jpg"] },
+          },
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [
+        {
+          id: "e1",
+          source: "imgA",
+          target: "m",
+          sourceHandle: "image",
+          targetHandle: "image_urls",
+        },
+        {
+          id: "e2",
+          source: "imgB",
+          target: "m",
+          sourceHandle: "image",
+          targetHandle: "image_urls",
+        },
+      ],
+    };
+    const out = mergeFalInput(g.nodes[2] as Extract<(typeof g.nodes)[2], { type: "fal_model" }>, g, {});
+    expect(out.image_urls).toEqual([
+      "https://cdn.example.com/a.jpg",
+      "https://cdn.example.com/b.jpg",
+    ]);
+  });
+
   it("merges image + audio wires for Kling AI Avatar (typical lip-sync graph)", () => {
     const g: WorkflowGraph = {
       nodes: [

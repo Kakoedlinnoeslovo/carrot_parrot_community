@@ -143,12 +143,22 @@ function assignExplicitTarget(
   input: Record<string, unknown>,
   key: string,
   signal: UpstreamSignal,
+  urlArrayKeysWired: Set<string>,
 ): void {
   const texts = signal.texts;
   const urls = signal.urls;
 
   if (keyExpectsUrlArray(key)) {
-    if (urls.length) input[key] = urls;
+    if (!urls.length) return;
+    if (!urlArrayKeysWired.has(key)) {
+      input[key] = urls;
+      urlArrayKeysWired.add(key);
+    } else {
+      const prev = Array.isArray(input[key])
+        ? (input[key] as unknown[]).filter((u): u is string => typeof u === "string" && u.trim() !== "")
+        : [];
+      input[key] = [...prev, ...urls];
+    }
     return;
   }
   if (keyExpectsSingleUrl(key)) {
@@ -190,11 +200,12 @@ export function mergeFalInput(
 
   const edges = incomingEdges(graph, node.id);
   const explicit = edges.filter((e) => isExplicitTargetHandle(e.targetHandle ?? null));
+  const urlArrayKeysWired = new Set<string>();
 
   for (const e of explicit) {
     const key = e.targetHandle as string;
     const signal = resolveUpstream(e, graph, artifacts);
-    assignExplicitTarget(endpointId, input, key, signal);
+    assignExplicitTarget(endpointId, input, key, signal, urlArrayKeysWired);
   }
 
   const texts = explicit

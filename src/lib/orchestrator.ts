@@ -5,6 +5,7 @@ import { getAppUrl } from "@/lib/env";
 import {
   createFalClientFromApiKey,
   formatFalClientError,
+  isTransientFalNetworkError,
   type FalClient,
 } from "@/lib/fal-client";
 import { resolveEffectiveFalApiKey } from "@/lib/fal-effective-key";
@@ -290,6 +291,12 @@ async function schedulePassthroughSteps(runId: string, graph: WorkflowGraph) {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const POLL_FAL_MAX_ATTEMPTS = 3;
+
 async function pollFalUntilComplete(
   fal: FalClient,
   runId: string,
@@ -300,46 +307,57 @@ async function pollFalUntilComplete(
   const existing = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
   if (!existing || existing.status === "succeeded" || existing.status === "failed") return;
 
-  try {
-    await fal.queue.subscribeToStatus(endpointId, { requestId });
-    const res = await fal.queue.result(endpointId, { requestId });
-    const media = extractMediaFromFalData(res.data);
-    const images = media.filter((m) => m.kind === "image" || m.kind === "unknown").map((m) => m.url);
-    const text = extractTextFromFalData(res.data);
+  let lastError: unknown;
+  for (let attempt = 0; attempt < POLL_FAL_MAX_ATTEMPTS; attempt++) {
+    try {
+      await fal.queue.subscribeToStatus(endpointId, { requestId });
+      const res = await fal.queue.result(endpointId, { requestId });
+      const media = extractMediaFromFalData(res.data);
+      const images = media.filter((m) => m.kind === "image" || m.kind === "unknown").map((m) => m.url);
+      const text = extractTextFromFalData(res.data);
 
-    const step = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
-    if (!step || step.status === "succeeded") {
+      const step = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
+      if (!step || step.status === "succeeded") {
+        return;
+      }
+
+      await prisma.runStep.update({
+        where: { id: stepId },
+        data: {
+          status: "succeeded",
+          outputsJson: JSON.stringify({
+            text: text || undefined,
+            images,
+            media,
+          } satisfies Artifact),
+        },
+      });
+
+      await continueRunAfterFalOutput(runId);
       return;
+    } catch (e) {
+      lastError = e;
+      if (attempt < POLL_FAL_MAX_ATTEMPTS - 1 && isTransientFalNetworkError(e)) {
+        await sleep(400 * (attempt + 1));
+        continue;
+      }
+      break;
     }
-
-    await prisma.runStep.update({
-      where: { id: stepId },
-      data: {
-        status: "succeeded",
-        outputsJson: JSON.stringify({
-          text: text || undefined,
-          images,
-          media,
-        } satisfies Artifact),
-      },
-    });
-
-    await continueRunAfterFalOutput(runId);
-  } catch (e) {
-    const msg = formatFalClientError(e);
-    const step = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
-    if (step?.status === "succeeded") {
-      return;
-    }
-    await prisma.runStep.update({
-      where: { id: stepId },
-      data: { status: "failed", error: msg },
-    });
-    await prisma.run.update({
-      where: { id: runId },
-      data: { status: "failed", finishedAt: new Date(), error: msg },
-    });
   }
+
+  const msg = formatFalClientError(lastError);
+  const step = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
+  if (step?.status === "succeeded") {
+    return;
+  }
+  await prisma.runStep.update({
+    where: { id: stepId },
+    data: { status: "failed", error: msg },
+  });
+  await prisma.run.update({
+    where: { id: runId },
+    data: { status: "failed", finishedAt: new Date(), error: msg },
+  });
 }
 
 function predecessors(graph: WorkflowGraph, nodeId: string): string[] {
