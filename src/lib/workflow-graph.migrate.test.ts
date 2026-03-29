@@ -41,6 +41,90 @@ describe("migrateWorkflowGraphEdges", () => {
     expect(g.edges[0]?.targetHandle).toBe("image_url");
   });
 
+  it("maps fal out → legacy target to image_url for Kling AI Avatar (not start_image_url)", () => {
+    const raw = workflowGraphSchema.parse({
+      nodes: [
+        {
+          id: "a",
+          type: "fal_model",
+          data: { falModelId: "fal-ai/nano-banana-2/edit", falInput: {} },
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "b",
+          type: "fal_model",
+          data: {
+            falModelId: "fal-ai/kling-video/ai-avatar/v2/pro",
+            falInput: {},
+            openapiInputKeys: ["prompt", "image_url", "audio_url"],
+            primaryImageInputKey: "image_url",
+          },
+          position: { x: 1, y: 0 },
+        },
+      ],
+      edges: [{ id: "e1", source: "a", target: "b", sourceHandle: "out", targetHandle: null }],
+    });
+    const g = migrateWorkflowGraphEdges(raw);
+    expect(g.edges[0]?.targetHandle).toBe("image_url");
+  });
+
+  it("maps fal out → legacy target to start_image_url for Kling image-to-video", () => {
+    const raw = workflowGraphSchema.parse({
+      nodes: [
+        {
+          id: "a",
+          type: "fal_model",
+          data: { falModelId: "fal-ai/nano-banana-2/edit", falInput: {} },
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "b",
+          type: "fal_model",
+          data: {
+            falModelId: "fal-ai/kling-video/v1/pro/image-to-video",
+            falInput: {},
+            openapiInputKeys: ["prompt", "start_image_url", "duration"],
+            primaryImageInputKey: "start_image_url",
+          },
+          position: { x: 1, y: 0 },
+        },
+      ],
+      edges: [{ id: "e1", source: "a", target: "b", sourceHandle: "out", targetHandle: null }],
+    });
+    const g = migrateWorkflowGraphEdges(raw);
+    expect(g.edges[0]?.targetHandle).toBe("start_image_url");
+  });
+
+  it("maps fal out → legacy target to prompt when upstream OpenAPI output is text-only", () => {
+    const raw = workflowGraphSchema.parse({
+      nodes: [
+        {
+          id: "a",
+          type: "fal_model",
+          data: {
+            falModelId: "openrouter/router/vision",
+            falInput: {},
+            openapiOutputKeys: ["output", "usage"],
+          },
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "b",
+          type: "fal_model",
+          data: {
+            falModelId: "fal-ai/flux/schnell",
+            falInput: {},
+            openapiInputKeys: ["prompt", "image_url", "num_images"],
+          },
+          position: { x: 1, y: 0 },
+        },
+      ],
+      edges: [{ id: "e1", source: "a", target: "b", sourceHandle: "out", targetHandle: null }],
+    });
+    const g = migrateWorkflowGraphEdges(raw);
+    expect(g.edges[0]?.targetHandle).toBe("prompt");
+  });
+
   it("remaps text/images/media fal sources to out", () => {
     const raw = workflowGraphSchema.parse({
       nodes: [

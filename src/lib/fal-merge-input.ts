@@ -7,19 +7,6 @@ export type MergeArtifact = {
   media?: { url: string; kind: string }[];
 };
 
-/**
- * Edit-style endpoints (nano-banana, gemini …/edit) take `image_urls: string[]`.
- * Many img2img models (e.g. FLUX) take `image_url` only — sending `image_urls` too can 422.
- */
-export function falEndpointUsesImageUrlsArray(endpointId: string): boolean {
-  if (endpointId.startsWith("workflows/")) return true;
-  const e = endpointId.toLowerCase();
-  if (e.includes("nano-banana")) return true;
-  if (e.includes("nano-boron")) return true;
-  if (e.includes("gemini") && e.includes("/edit")) return true;
-  return false;
-}
-
 /** Map upstream prompts into workflow-specific fields (e.g. weather template). */
 export function applyWorkflowInputAliases(
   endpointId: string,

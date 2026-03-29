@@ -44,13 +44,19 @@ export function graphToFlow(graph: WorkflowGraph): { nodes: Node[]; edges: Edge[
           data: { title: n.data.title },
         };
       }
+      const fd = n.data;
       return {
         id: n.id,
         type: "fal_model",
         position: n.position,
         data: {
-          falModelId: n.data.falModelId,
-          falInput: n.data.falInput,
+          falModelId: fd.falModelId,
+          falInput: fd.falInput,
+          ...(fd.openapiInputKeys != null ? { openapiInputKeys: fd.openapiInputKeys } : {}),
+          ...(fd.openapiOutputKeys != null ? { openapiOutputKeys: fd.openapiOutputKeys } : {}),
+          ...(fd.primaryImageInputKey != null && fd.primaryImageInputKey !== ""
+            ? { primaryImageInputKey: fd.primaryImageInputKey }
+            : {}),
         },
       };
     }),
@@ -105,7 +111,13 @@ export function flowToGraph(nodes: Node[], edges: Edge[]): WorkflowGraph {
       };
     }
     if (n.type === "fal_model") {
-      const d = n.data as { falModelId?: string; falInput?: Record<string, unknown> };
+      const d = n.data as {
+        falModelId?: string;
+        falInput?: Record<string, unknown>;
+        openapiInputKeys?: string[];
+        openapiOutputKeys?: string[];
+        primaryImageInputKey?: string;
+      };
       const falModelId = d.falModelId?.trim() || DEFAULT_FAL_MODEL;
       const raw = d.falInput;
       const falInput =
@@ -119,6 +131,11 @@ export function flowToGraph(nodes: Node[], edges: Edge[]): WorkflowGraph {
         data: {
           falModelId,
           falInput,
+          ...(d.openapiInputKeys != null ? { openapiInputKeys: d.openapiInputKeys } : {}),
+          ...(d.openapiOutputKeys != null ? { openapiOutputKeys: d.openapiOutputKeys } : {}),
+          ...(d.primaryImageInputKey != null && d.primaryImageInputKey !== ""
+            ? { primaryImageInputKey: d.primaryImageInputKey }
+            : {}),
         },
       };
     }
