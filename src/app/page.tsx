@@ -80,6 +80,13 @@ export default function Home() {
               >
                 Explore community
               </TrackedLink>
+              <TrackedLink
+                href="/studio/create"
+                eventLabel="hero_create_from_video"
+                className="rounded-lg border border-cyan-500/25 bg-cyan-950/30 px-5 py-2.5 font-medium text-cyan-100 shadow-[0_8px_32px_-12px_rgba(0,0,0,0.5)] backdrop-blur-md transition-[background-color,border-color,transform] duration-300 ease-out hover:border-cyan-400/35 hover:bg-cyan-950/50 motion-safe:hover:-translate-y-0.5"
+              >
+                Create from video
+              </TrackedLink>
             </div>
 
             <TrackedLink

@@ -73,6 +73,38 @@ describe("mergeFalInput", () => {
     expect(out.prompt).toBe("direct");
   });
 
+  it("input_video → video_url passes HTTPS video URL", () => {
+    const g: WorkflowGraph = {
+      nodes: [
+        {
+          id: "v1",
+          type: "input_video",
+          data: { videoUrl: "https://cdn.example.com/ad.mp4" },
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "m1",
+          type: "fal_model",
+          data: { falModelId: "fal-ai/x", falInput: {} },
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [
+        {
+          id: "e1",
+          source: "v1",
+          target: "m1",
+          sourceHandle: "video",
+          targetHandle: "video_url",
+        },
+      ],
+    };
+    const out = mergeFalInput(g.nodes[1] as Extract<(typeof g.nodes)[1], { type: "fal_model" }>, g, {
+      v1: { images: [], media: [{ url: "https://cdn.example.com/ad.mp4", kind: "video" }] },
+    });
+    expect(out.video_url).toBe("https://cdn.example.com/ad.mp4");
+  });
+
   it("out → image_url passes prior step media into flux", () => {
     const g: WorkflowGraph = {
       nodes: [

@@ -83,12 +83,19 @@ function inferInputNodeSourceKind(
 ): "text" | "image" | "any" {
   if (source.type === "input_prompt") return "text";
   if (source.type === "input_image") return "image";
+  if (source.type === "input_video") return "image";
   if (source.type === "input_group") {
     const slots = source.data.slots ?? [];
     const slot = slots.find((s) => s.id === sourceHandle);
     if (slot?.kind === "image") return "image";
     if (slot?.kind === "text") return "text";
     return "any";
+  }
+  if (source.type === "media_process") {
+    const sh = (sourceHandle ?? "out").trim() || "out";
+    if (sh !== "out") return "any";
+    if (source.data.operation === "segment_scenes") return "text";
+    return "image";
   }
   return "any";
 }

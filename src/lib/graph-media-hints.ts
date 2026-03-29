@@ -76,6 +76,12 @@ export function extractGraphMediaHints(graph: WorkflowGraph): GraphMediaHint[] {
         }
       }
     }
+    if (n.type === "input_video") {
+      const url = n.data.videoUrl?.trim() ?? "";
+      if (url.startsWith("http")) {
+        addHttpsString(out, seen, url, `node:${n.id}:input_video`);
+      }
+    }
     if (n.type === "input_group") {
       for (const s of n.data.slots ?? []) {
         if (s.kind === "image" && s.value?.trim()) {

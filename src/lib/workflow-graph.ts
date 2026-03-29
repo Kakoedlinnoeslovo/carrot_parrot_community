@@ -45,6 +45,22 @@ const inputSlotSchema = z.object({
   value: z.string().default(""),
 });
 
+export const mediaProcessOperationSchema = z.enum([
+  "extract_audio",
+  "extract_frames",
+  "segment_scenes",
+  "concat_videos",
+  "mux_audio_video",
+]);
+
+const mediaProcessParamsSchema = z
+  .object({
+    fps: z.number().optional(),
+    maxFrames: z.number().optional(),
+    sceneThreshold: z.number().optional(),
+  })
+  .optional();
+
 export const workflowNodeSchema = z.discriminatedUnion("type", [
   z.object({
     id: z.string().min(1),
@@ -65,10 +81,28 @@ export const workflowNodeSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     id: z.string().min(1),
+    type: z.literal("input_video"),
+    data: z.object({
+      /** Public https URL to video (uploaded or remote) */
+      videoUrl: z.string().default(""),
+    }),
+    position: z.object({ x: z.number(), y: z.number() }),
+  }),
+  z.object({
+    id: z.string().min(1),
     type: z.literal("input_group"),
     data: z.object({
       /** Named slots; each has a source handle `id` for edges */
       slots: z.array(inputSlotSchema).default([]),
+    }),
+    position: z.object({ x: z.number(), y: z.number() }),
+  }),
+  z.object({
+    id: z.string().min(1),
+    type: z.literal("media_process"),
+    data: z.object({
+      operation: mediaProcessOperationSchema,
+      params: mediaProcessParamsSchema,
     }),
     position: z.object({ x: z.number(), y: z.number() }),
   }),
@@ -143,12 +177,30 @@ function inferLegacyTargetHandle(graph: WorkflowGraph, edge: WorkflowEdge): stri
 
   if (src.type === "input_prompt") return "prompt";
   if (src.type === "input_image") return "image_url";
+  if (src.type === "input_video") return "video_url";
 
   if (src.type === "input_group") {
     const slots = src.data.slots ?? [];
     const slot = slots.find((s) => s.id === edge.sourceHandle);
     if (slot?.kind === "text") return "prompt";
     return "image_url";
+  }
+
+  if (src.type === "media_process") {
+    const sh = edge.sourceHandle ?? "out";
+    if (sh === "out" || sh === "") {
+      const tgtData = tgt.data as {
+        openapiInputKeys?: string[];
+        primaryImageInputKey?: string;
+      };
+      const tgtKeys = tgtData.openapiInputKeys;
+      const wantsVideo =
+        tgtKeys?.some((k) => /video_url|start_image|image_url|image_urls/i.test(k)) ?? true;
+      if (wantsVideo && tgtKeys?.some((k) => k.includes("video_url"))) return "video_url";
+      if (tgtKeys?.some((k) => k.includes("audio_url"))) return "audio_url";
+      return pickImageInputKeyForTarget(tgt);
+    }
+    return "prompt";
   }
 
   if (src.type === "fal_model") {

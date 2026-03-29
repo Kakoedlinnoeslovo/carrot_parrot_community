@@ -11,6 +11,24 @@ function graphFixture(overrides: Partial<WorkflowGraph> = {}): WorkflowGraph {
 }
 
 describe("extractGraphMediaHints", () => {
+  it("collects input_video https as video kind", () => {
+    const u = "https://example.com/a.mp4";
+    const g = graphFixture({
+      nodes: [
+        {
+          id: "v1",
+          type: "input_video",
+          position: { x: 0, y: 0 },
+          data: { videoUrl: u },
+        },
+      ],
+    });
+    const hints = extractGraphMediaHints(g);
+    expect(hints).toHaveLength(1);
+    expect(hints[0]?.url).toBe(u);
+    expect(hints[0]?.kind).toBe("video");
+  });
+
   it("collects input_image https and dedupes", () => {
     const u = "https://example.com/a.png";
     const g = graphFixture({

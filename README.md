@@ -44,6 +44,7 @@ Models such as [`openrouter/router/vision`](https://fal.ai/models/openrouter/rou
 - Node.js 20+  
 - A [fal.ai](https://fal.ai) API key per user (saved after sign-up, encrypted with `AUTH_SECRET`) or an optional operator key `FAL_KEY` for dev / shared billing  
 - For local webhooks, a publicly reachable `NEXT_PUBLIC_APP_URL` (e.g. [ngrok](https://ngrok.com) or similar) so fal can POST back to your machine  
+- **FFmpeg** — `ffmpeg` and `ffprobe` on the server `PATH` for `media_process` nodes (extract audio/frames, concat, mux, scene helpers). Outputs upload via fal storage; large videos may need long timeouts or a background worker instead of a serverless request.
 
 ## Setup
 

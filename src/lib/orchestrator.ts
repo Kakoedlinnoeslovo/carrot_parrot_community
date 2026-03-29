@@ -24,6 +24,7 @@ import {
   parseArtifactJson,
 } from "@/lib/artifact-json";
 import { pickWorkflowCoverFromRunSteps } from "@/lib/workflow-cover-from-run";
+import { runMediaProcessNode } from "@/lib/media-process-runner";
 
 export type { Artifact, MediaItem } from "@/lib/artifact-json";
 
@@ -243,6 +244,7 @@ async function continueRunAfterFalOutput(runId: string) {
   const graph = parseWorkflowGraph(run.workflow.graphJson);
   const key = await resolveEffectiveFalApiKey(run.userId);
   const fal = key ? createFalClientFromApiKey(key) : null;
+  await scheduleReadyMediaProcessSteps(runId, graph, fal);
   await scheduleReadyFalSteps(runId, graph, fal);
   await schedulePassthroughSteps(runId, graph);
   await finalizeRunIfDone(runId);
@@ -415,7 +417,7 @@ export async function processRun(runId: string) {
   if (run.status === "succeeded" || run.status === "failed") return;
 
   const graph = parseWorkflowGraph(run.workflow.graphJson);
-  const needsFal = graph.nodes.some((n) => n.type === "fal_model");
+  const needsFal = graph.nodes.some((n) => n.type === "fal_model" || n.type === "media_process");
   const falKey = await resolveEffectiveFalApiKey(run.userId);
   if (needsFal && !falKey) {
     await failRun(
@@ -490,11 +492,102 @@ export async function processRun(runId: string) {
         },
       });
     }
+    if (node.type === "input_video") {
+      const raw = (node.data.videoUrl ?? "").trim();
+      const ok = /^https?:\/\//i.test(raw);
+      const media: MediaItem[] = ok && raw ? [{ url: raw, kind: "video" }] : [];
+      await prisma.runStep.updateMany({
+        where: { runId, nodeId: node.id, status: "pending" },
+        data: {
+          status: "succeeded",
+          inputsJson: JSON.stringify({}),
+          outputsJson: JSON.stringify({
+            text: undefined,
+            images: [],
+            media,
+          } satisfies Artifact),
+        },
+      });
+    }
   }
 
-  await schedulePassthroughSteps(runId, graph);
+  await scheduleReadyMediaProcessSteps(runId, graph, fal);
   await scheduleReadyFalSteps(runId, graph, fal);
+  await schedulePassthroughSteps(runId, graph);
   await finalizeRunIfDone(runId);
+}
+
+/** Run `media_process` nodes whose predecessors have succeeded (may run multiple waves). */
+export async function scheduleReadyMediaProcessSteps(
+  runId: string,
+  graph: WorkflowGraph,
+  fal: FalClient | null,
+) {
+  const needs = graph.nodes.some((n) => n.type === "media_process");
+  if (!needs) return;
+  if (!fal) {
+    await failRun(
+      runId,
+      "Add fal.ai API key for media processing (uploads use fal storage).",
+    );
+    return;
+  }
+
+  for (;;) {
+    const steps = await prisma.runStep.findMany({ where: { runId } });
+    const byNode = Object.fromEntries(steps.map((s) => [s.nodeId, s]));
+    const failed = steps.some((s) => s.status === "failed");
+    if (failed) return;
+
+    const ready = graph.nodes.filter((node) => {
+      if (node.type !== "media_process") return false;
+      const step = byNode[node.id];
+      if (!step || step.status !== "pending") return false;
+      const preds = predecessors(graph, node.id);
+      return preds.every((pid) => byNode[pid]?.status === "succeeded");
+    });
+
+    if (ready.length === 0) break;
+
+    await Promise.all(
+      ready.map(async (node) => {
+        if (node.type !== "media_process") return;
+        const step = byNode[node.id]!;
+        await prisma.runStep.update({ where: { id: step.id }, data: { status: "running" } });
+        try {
+          const latest = await prisma.runStep.findMany({ where: { runId } });
+          const artifactByNodeId: Record<string, MergeArtifact | undefined> = Object.fromEntries(
+            latest.map((s) => [s.nodeId, parseArtifactJson(s.outputsJson) as MergeArtifact]),
+          );
+          const artifact = await runMediaProcessNode(node, graph, artifactByNodeId, fal);
+          await prisma.runStep.update({
+            where: { id: step.id },
+            data: {
+              status: "succeeded",
+              outputsJson: JSON.stringify({
+                text: artifact.text,
+                images: artifact.images,
+                media: artifact.media,
+              } satisfies Artifact),
+            },
+          });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          await prisma.runStep.update({
+            where: { id: step.id },
+            data: { status: "failed", error: msg },
+          });
+          await prisma.run.update({
+            where: { id: runId },
+            data: { status: "failed", finishedAt: new Date(), error: msg },
+          });
+        }
+      }),
+    );
+
+    const anyFailed = await prisma.runStep.findFirst({ where: { runId, status: "failed" } });
+    if (anyFailed) return;
+  }
 }
 
 /** Exported for tests; also used by `processRun` and `continueRunAfterFalOutput`. */

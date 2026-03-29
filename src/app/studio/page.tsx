@@ -22,9 +22,17 @@ export default async function StudioIndexPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-12">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold text-zinc-100">Your workflows</h1>
-        <NewWorkflowForm />
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href="/studio/create"
+            className="rounded-lg border border-cyan-500/30 bg-cyan-950/40 px-4 py-2 text-sm font-medium text-cyan-100 transition-colors hover:bg-cyan-950/70"
+          >
+            Create from video
+          </Link>
+          <NewWorkflowForm />
+        </div>
       </div>
       <p className="mt-2 text-sm text-zinc-400">
         Open the canvas, connect nodes, and run on your fal.ai quota. Change your key anytime under{" "}

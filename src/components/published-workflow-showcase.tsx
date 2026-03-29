@@ -118,6 +118,66 @@ function PublishedInputImageNode({ data }: NodeProps) {
   );
 }
 
+function PublishedInputVideoNode({ data }: NodeProps) {
+  const d = data as { videoUrl?: string };
+  const url = (d.videoUrl ?? "").trim();
+  const showPreview = /^https?:\/\//i.test(url);
+  return (
+    <div className="motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-out min-w-[180px] max-w-[240px] rounded-xl border border-cyan-500/25 bg-zinc-950/55 px-3 py-2 pr-5 shadow-[0_12px_40px_rgba(0,0,0,0.35)] backdrop-blur-xl">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-cyan-300/90">Video</div>
+      {showPreview ? (
+        <video
+          src={url}
+          controls
+          playsInline
+          className="mt-2 max-h-28 w-full rounded-lg border border-white/10 bg-black"
+        />
+      ) : (
+        <p className="mt-1 line-clamp-2 text-[11px] text-zinc-500">{url || "No URL"}</p>
+      )}
+      <div className="relative mt-2 flex min-h-[18px] justify-end">
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="video"
+          className={`${FLOW_HANDLE_PUBLISHED} !absolute !right-0 !top-1/2 !-translate-y-1/2 !bg-cyan-400/90`}
+        />
+      </div>
+    </div>
+  );
+}
+
+function PublishedMediaProcessNode({ data }: NodeProps) {
+  const d = data as { operation?: string };
+  const op = d.operation ?? "extract_audio";
+  return (
+    <div className="motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-out min-w-[200px] max-w-[260px] rounded-xl border border-teal-500/25 bg-zinc-950/55 px-3 py-2 shadow-[0_12px_40px_rgba(0,0,0,0.35)] backdrop-blur-xl">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-teal-300/90">Media process</div>
+      <p className="mt-1 font-mono text-[11px] text-teal-200/90">{op}</p>
+      <div className="relative mt-3 min-h-[44px]">
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="video_url"
+          className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !top-[25%] !-translate-y-1/2 !bg-teal-500/90`}
+        />
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="audio_url"
+          className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !top-[75%] !-translate-y-1/2 !bg-teal-500/90`}
+        />
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="out"
+          className={`${FLOW_HANDLE_PUBLISHED} !absolute !right-0 !top-1/2 !-translate-y-1/2 !bg-teal-400/90`}
+        />
+      </div>
+    </div>
+  );
+}
+
 function PublishedInputGroupNode({ data }: NodeProps) {
   const d = data as { slots?: InputSlot[] };
   const slots = d.slots ?? [];
@@ -268,7 +328,9 @@ function PublishedFalModelNode({ data }: NodeProps) {
 const publishedNodeTypes = {
   input_prompt: PublishedInputPromptNode,
   input_image: PublishedInputImageNode,
+  input_video: PublishedInputVideoNode,
   input_group: PublishedInputGroupNode,
+  media_process: PublishedMediaProcessNode,
   output_preview: PublishedOutputPreviewNode,
   fal_model: PublishedFalModelNode,
 };
