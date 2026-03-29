@@ -36,6 +36,25 @@ export function graphToFlow(graph: WorkflowGraph): { nodes: Node[]; edges: Edge[
           data: { slots: n.data.slots },
         };
       }
+      if (n.type === "input_video") {
+        return {
+          id: n.id,
+          type: "input_video",
+          position: n.position,
+          data: { videoUrl: n.data.videoUrl },
+        };
+      }
+      if (n.type === "media_process") {
+        return {
+          id: n.id,
+          type: "media_process",
+          position: n.position,
+          data: {
+            operation: n.data.operation,
+            params: n.data.params ?? {},
+          },
+        };
+      }
       if (n.type === "output_preview") {
         return {
           id: n.id,
@@ -99,6 +118,40 @@ export function flowToGraph(nodes: Node[], edges: Edge[]): WorkflowGraph {
         type: "input_group" as const,
         position: n.position,
         data: { slots: Array.isArray(d.slots) ? d.slots : [] },
+      };
+    }
+    if (n.type === "input_video") {
+      const d = n.data as { videoUrl?: string };
+      return {
+        id: n.id,
+        type: "input_video" as const,
+        position: n.position,
+        data: { videoUrl: d.videoUrl ?? "" },
+      };
+    }
+    if (n.type === "media_process") {
+      const d = n.data as {
+        operation?: string;
+        params?: { fps?: number; maxFrames?: number; sceneThreshold?: number };
+      };
+      let op = d.operation;
+      if (
+        op !== "extract_audio" &&
+        op !== "extract_frames" &&
+        op !== "segment_scenes" &&
+        op !== "concat_videos" &&
+        op !== "mux_audio_video"
+      ) {
+        op = "extract_audio";
+      }
+      return {
+        id: n.id,
+        type: "media_process" as const,
+        position: n.position,
+        data: {
+          operation: op,
+          params: d.params && typeof d.params === "object" ? d.params : {},
+        },
       };
     }
     if (n.type === "output_preview") {

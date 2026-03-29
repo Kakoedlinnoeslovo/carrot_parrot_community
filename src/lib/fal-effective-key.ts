@@ -3,7 +3,7 @@ import { decryptFalKey } from "@/lib/fal-key-crypto";
 import type { WorkflowGraph } from "@/lib/workflow-graph";
 
 export function graphNeedsFalKey(graph: WorkflowGraph): boolean {
-  return graph.nodes.some((n) => n.type === "fal_model");
+  return graph.nodes.some((n) => n.type === "fal_model" || n.type === "media_process");
 }
 
 /**

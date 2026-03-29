@@ -97,6 +97,25 @@ function resolveUpstream(
     return { texts: [], urls: ok && raw ? [raw] : [] };
   }
 
+  if (sourceNode.type === "input_video") {
+    const raw = (sourceNode.data.videoUrl ?? "").trim();
+    const ok = /^https?:\/\//i.test(raw);
+    return { texts: [], urls: ok && raw ? [raw] : [] };
+  }
+
+  if (sourceNode.type === "media_process") {
+    const art = artifacts[edge.source];
+    if (!art) return { texts: [], urls: [] };
+    const sh = edge.sourceHandle ?? "out";
+    if (sh === "text" && art.text) return { texts: [art.text], urls: [] };
+    const urls = [...art.images, ...(art.media?.map((m) => m.url) ?? [])];
+    const texts = art.text ? [art.text] : [];
+    if (sh === "out" || sh === "") {
+      return { texts, urls: [...new Set(urls)] };
+    }
+    return { texts, urls: [...new Set(urls)] };
+  }
+
   if (sourceNode.type === "fal_model") {
     const art = artifacts[edge.source];
     if (!art) return { texts: [], urls: [] };

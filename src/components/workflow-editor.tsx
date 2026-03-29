@@ -68,6 +68,16 @@ function inferSourceWireKind(
     if (slot) return slot.kind === "image" ? "image" : "text";
     return "any";
   }
+  if (n.type === "input_video") return "image";
+  if (n.type === "media_process") {
+    const h = sourceHandle ?? "out";
+    if (h === "out" || !String(h).trim()) {
+      const op = (n.data as { operation?: string }).operation;
+      if (op === "segment_scenes") return "text";
+      return "image";
+    }
+    return "any";
+  }
   if (n.type === "fal_model") {
     const h = sourceHandle ?? "";
     // `out` is the full step artifact (caption text and/or media URLs). Do not tag it as `image` or
@@ -93,6 +103,11 @@ function inferTargetWireExpectation(
 ): WireKind {
   const n = nodes.find((x) => x.id === target);
   if (!n) return "any";
+  if (n.type === "media_process") {
+    const h = targetHandle ?? "";
+    if (/^(video_url|audio_url)$/i.test(h)) return "image";
+    return "any";
+  }
   if (n.type === "output_preview") return "image";
   if (n.type !== "fal_model") return "any";
   const h = targetHandle ?? "";
@@ -118,6 +133,9 @@ function isWorkflowConnectionValid(nodes: Node[], conn: Connection | Edge): bool
   const tgtNode = nodes.find((x) => x.id === target);
   const th = conn.targetHandle ?? null;
   if (tgtNode?.type === "fal_model" && (!th || !String(th).trim())) {
+    return false;
+  }
+  if (tgtNode?.type === "media_process" && (!th || !String(th).trim())) {
     return false;
   }
 
@@ -185,6 +203,83 @@ function InputImageNode({ id, data }: NodeProps) {
           className={`${FLOW_HANDLE_BASE} !absolute !right-0 !top-1/2 !-translate-y-1/2 !border-emerald-500/35 !bg-emerald-500`}
           title='sourceHandle="image" — wire to fal image_url / image_urls / model_image as needed'
         />
+      </div>
+    </div>
+  );
+}
+
+function InputVideoNode({ id, data }: NodeProps) {
+  const d = data as { videoUrl?: string };
+  const url = (d.videoUrl ?? "").trim();
+  const showPreview = /^https?:\/\//i.test(url);
+  return (
+    <div className="min-w-[200px] max-w-[260px] rounded-lg border border-cyan-600/50 bg-zinc-900/90 px-3 py-2 pr-6 shadow-lg">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-xs font-medium uppercase tracking-wide text-cyan-400">Video</span>
+        <span className="font-mono text-[10px] text-zinc-600">video</span>
+      </div>
+      <div className="text-xs text-zinc-400">Node {id.slice(0, 8)}…</div>
+      {showPreview ? (
+        <video
+          src={url}
+          controls
+          playsInline
+          className="mt-2 max-h-36 w-full rounded border border-zinc-700 bg-black"
+        />
+      ) : (
+        <p className="mt-1 line-clamp-2 text-xs text-zinc-500">{url || "No video URL"}</p>
+      )}
+      <div className="relative mt-2 flex min-h-[22px] items-center justify-end gap-2">
+        <span className="font-mono text-[10px] text-cyan-300">video</span>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="video"
+          className={`${FLOW_HANDLE_BASE} !absolute !right-0 !top-1/2 !-translate-y-1/2 !border-cyan-500/35 !bg-cyan-600`}
+          title='sourceHandle="video" — wire to media_process video_url or fal video_url'
+        />
+      </div>
+    </div>
+  );
+}
+
+function MediaProcessNode({ id, data }: NodeProps) {
+  const d = data as { operation?: string };
+  const op = d.operation ?? "extract_audio";
+  return (
+    <div className="min-w-[220px] max-w-[280px] rounded-lg border border-teal-500/45 bg-zinc-900/90 px-3 py-2 pr-2 shadow-lg">
+      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-teal-400">Media process</div>
+      <div className="text-[10px] text-zinc-500">Node {id.slice(0, 8)}…</div>
+      <p className="mt-1 font-mono text-xs text-teal-200/90">{op}</p>
+      <div className="relative mt-3 min-h-[52px]">
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="video_url"
+          className={`${FLOW_HANDLE_BASE} !absolute !left-0 !top-[22%] !-translate-x-0 !-translate-y-1/2 !border-teal-500/40 !bg-teal-600`}
+          title="video_url"
+        />
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="audio_url"
+          className={`${FLOW_HANDLE_BASE} !absolute !left-0 !top-[78%] !-translate-x-0 !-translate-y-1/2 !border-teal-500/40 !bg-teal-600`}
+          title="audio_url"
+        />
+        <div className="pointer-events-none flex h-full flex-col justify-between py-1 pl-4 text-[9px] text-zinc-500">
+          <span className="font-mono">video_url</span>
+          <span className="font-mono">audio_url</span>
+        </div>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="out"
+          className={`${FLOW_HANDLE_BASE} !absolute !right-0 !top-1/2 !-translate-y-1/2 !border-teal-500/40 !bg-teal-500`}
+          title='sourceHandle="out"'
+        />
+        <span className="pointer-events-none absolute right-6 top-1/2 -translate-y-1/2 font-mono text-[10px] text-teal-300">
+          out
+        </span>
       </div>
     </div>
   );
@@ -360,6 +455,87 @@ function InputImageNodeSettings({
     </div>
   );
 }
+
+function InputVideoNodeSettings({
+  videoUrl,
+  onVideoUrlChange,
+}: {
+  videoUrl: string;
+  onVideoUrlChange: (v: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function upload(file: File) {
+    setErr(null);
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/fal/storage/upload", { method: "POST", body: fd });
+      const j = (await res.json()) as { url?: string; error?: string };
+      if (!res.ok) {
+        throw new Error(j.error ?? res.statusText);
+      }
+      if (j.url) {
+        onVideoUrlChange(j.url);
+        track(AnalyticsEvent.storageUploadSuccess, { context: "input_video" });
+      }
+    } catch (e) {
+      const msg = (e instanceof Error ? e.message : String(e)).slice(0, 120);
+      track(AnalyticsEvent.storageUploadError, { context: "input_video", message: msg });
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const trimmed = videoUrl.trim();
+  const showPreview = /^https?:\/\//i.test(trimmed);
+
+  return (
+    <div className="mt-2 space-y-2">
+      <label className="text-xs text-zinc-500">Video URL or upload (HTTPS)</label>
+      <input
+        type="url"
+        className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 font-mono text-xs text-zinc-100"
+        placeholder="https://…"
+        value={videoUrl}
+        onChange={(e) => onVideoUrlChange(e.target.value)}
+      />
+      <label className="inline-flex cursor-pointer items-center rounded border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700">
+        {busy ? "Uploading…" : "Upload video file"}
+        <input
+          type="file"
+          accept="video/*"
+          className="sr-only"
+          disabled={busy}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (f) void upload(f);
+          }}
+        />
+      </label>
+      {err && <p className="text-xs text-red-400">{err}</p>}
+      {showPreview ? (
+        <video src={trimmed} controls playsInline className="max-h-48 rounded border border-zinc-700 bg-black" />
+      ) : null}
+      <p className="text-[11px] leading-snug text-zinc-600">
+        Wire <span className="font-mono">video</span> to <span className="font-mono">video_url</span> on a media
+        process or fal node.
+      </p>
+    </div>
+  );
+}
+
+const MEDIA_PROCESS_OPS = [
+  "extract_audio",
+  "extract_frames",
+  "segment_scenes",
+  "concat_videos",
+  "mux_audio_video",
+] as const;
 
 function InputGroupNodeSettings({
   slots,
@@ -629,7 +805,9 @@ function FalModelNode({ id, data }: NodeProps) {
 const nodeTypes = {
   input_prompt: InputPromptNode,
   input_image: InputImageNode,
+  input_video: InputVideoNode,
   input_group: InputGroupNode,
+  media_process: MediaProcessNode,
   output_preview: OutputPreviewNode,
   fal_model: FalModelNode,
 };
@@ -1074,7 +1252,14 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
   }, [nodes, edges, workflowId, wfTitle]);
 
   const addNode = (
-    kind: "input_prompt" | "input_image" | "input_group" | "output_preview" | "fal_model",
+    kind:
+      | "input_prompt"
+      | "input_image"
+      | "input_video"
+      | "input_group"
+      | "media_process"
+      | "output_preview"
+      | "fal_model",
   ) => {
     track(AnalyticsEvent.canvasAddNode, { nodeType: kind });
     const id = nanoid(10);
@@ -1092,35 +1277,39 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
           ? { prompt: "" }
           : kind === "input_image"
             ? { imageUrl: "" }
-            : kind === "input_group"
-              ? {
-                  slots: [
-                    {
-                      id: `slot-${nanoid(6)}`,
-                      kind: "image" as const,
-                      label: "model_image",
-                      value: "",
-                    },
-                    {
-                      id: `slot-${nanoid(6)}`,
-                      kind: "image" as const,
-                      label: "garment_image",
-                      value: "",
-                    },
-                    {
-                      id: `slot-${nanoid(6)}`,
-                      kind: "text" as const,
-                      label: "prompt",
-                      value: "",
-                    },
-                  ],
-                }
-              : kind === "output_preview"
-                ? { title: "Response" }
-                : {
-                    falModelId: "fal-ai/flux/schnell",
-                    falInput: { prompt: "Describe the image", num_images: 1 },
-                  },
+            : kind === "input_video"
+              ? { videoUrl: "" }
+              : kind === "media_process"
+                ? { operation: "extract_audio", params: {} }
+                : kind === "input_group"
+                  ? {
+                      slots: [
+                        {
+                          id: `slot-${nanoid(6)}`,
+                          kind: "image" as const,
+                          label: "model_image",
+                          value: "",
+                        },
+                        {
+                          id: `slot-${nanoid(6)}`,
+                          kind: "image" as const,
+                          label: "garment_image",
+                          value: "",
+                        },
+                        {
+                          id: `slot-${nanoid(6)}`,
+                          kind: "text" as const,
+                          label: "prompt",
+                          value: "",
+                        },
+                      ],
+                    }
+                  : kind === "output_preview"
+                    ? { title: "Response" }
+                    : {
+                        falModelId: "fal-ai/flux/schnell",
+                        falInput: { prompt: "Describe the image", num_images: 1 },
+                      },
     };
     setNodes((nds) => [...nds, base]);
   };
@@ -1340,6 +1529,20 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
             </button>
             <button
               type="button"
+              onClick={() => addNode("input_video")}
+              className="rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 ring-1 ring-cyan-900/50 hover:bg-zinc-700"
+            >
+              + Video input
+            </button>
+            <button
+              type="button"
+              onClick={() => addNode("media_process")}
+              className="rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 ring-1 ring-teal-900/50 hover:bg-zinc-700"
+            >
+              + Media process
+            </button>
+            <button
+              type="button"
               onClick={() => addNode("input_group")}
               className="rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 ring-1 ring-zinc-600 hover:bg-zinc-700"
             >
@@ -1537,6 +1740,73 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
               imageUrl={String((selectedNode.data as { imageUrl?: string }).imageUrl ?? "")}
               onImageUrlChange={(imageUrl) => updateSelectedData({ imageUrl })}
             />
+          )}
+          {selectedNode?.type === "input_video" && (
+            <InputVideoNodeSettings
+              videoUrl={String((selectedNode.data as { videoUrl?: string }).videoUrl ?? "")}
+              onVideoUrlChange={(videoUrl) => updateSelectedData({ videoUrl })}
+            />
+          )}
+          {selectedNode?.type === "media_process" && (
+            <div className="mt-2 space-y-2">
+              <label className="text-xs text-zinc-500">Operation</label>
+              <select
+                className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
+                value={String((selectedNode.data as { operation?: string }).operation ?? "extract_audio")}
+                onChange={(e) =>
+                  updateSelectedData({
+                    operation: e.target.value,
+                    params: (selectedNode.data as { params?: Record<string, unknown> }).params ?? {},
+                  })
+                }
+              >
+                {MEDIA_PROCESS_OPS.map((op) => (
+                  <option key={op} value={op}>
+                    {op}
+                  </option>
+                ))}
+              </select>
+              <label className="text-xs text-zinc-500">Params (extract_frames)</label>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  step="0.1"
+                  min={0.1}
+                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-100"
+                  placeholder="fps"
+                  value={Number((selectedNode.data as { params?: { fps?: number } }).params?.fps ?? "") || ""}
+                  onChange={(e) => {
+                    const v = e.target.value === "" ? undefined : Number(e.target.value);
+                    updateSelectedData({
+                      params: {
+                        ...((selectedNode.data as { params?: Record<string, unknown> }).params ?? {}),
+                        ...(v != null && !Number.isNaN(v) ? { fps: v } : { fps: undefined }),
+                      },
+                    });
+                  }}
+                />
+                <input
+                  type="number"
+                  min={1}
+                  max={48}
+                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-100"
+                  placeholder="maxFrames"
+                  value={Number((selectedNode.data as { params?: { maxFrames?: number } }).params?.maxFrames ?? "") || ""}
+                  onChange={(e) => {
+                    const v = e.target.value === "" ? undefined : Number(e.target.value);
+                    updateSelectedData({
+                      params: {
+                        ...((selectedNode.data as { params?: Record<string, unknown> }).params ?? {}),
+                        ...(v != null && !Number.isNaN(v) ? { maxFrames: v } : { maxFrames: undefined }),
+                      },
+                    });
+                  }}
+                />
+              </div>
+              <p className="text-[11px] text-zinc-600">
+                Requires <span className="font-mono">ffmpeg</span> on the server. Outputs upload to fal storage.
+              </p>
+            </div>
           )}
           {selectedNode?.type === "input_group" && (
             <div className="mt-2 space-y-2">
