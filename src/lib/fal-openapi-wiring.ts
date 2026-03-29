@@ -3,7 +3,7 @@
  * replacing endpoint-id substring heuristics.
  */
 
-import { listMappableInputKeysFromSchema, listMappableOutputKeysFromSchema } from "@/lib/fal-schema-handles";
+import { listMappableInputKeysFromSchema } from "@/lib/fal-schema-handles";
 
 /** Top-level input keys that accept raster / frame images from an upstream image output. */
 export function isRasterImageInputKey(key: string): boolean {
@@ -17,7 +17,7 @@ export function isRasterImageInputKey(key: string): boolean {
   return false;
 }
 
-function isTextLikeInputKey(key: string): boolean {
+export function isTextLikeInputKey(key: string): boolean {
   const k = key.toLowerCase();
   return /prompt|text|caption|instruction|system|negative|weather|description|query|input$/.test(k);
 }
