@@ -1,9 +1,48 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import ffmpegStatic from "ffmpeg-static";
+import ffprobeInstaller from "@ffprobe-installer/ffprobe";
 
 const MAX_DOWNLOAD_BYTES = 120 * 1024 * 1024;
+
+let cachedFfmpegPath: string | undefined;
+let cachedFfprobePath: string | undefined;
+
+/** Prefer FFMPEG_PATH, then npm `ffmpeg-static`, then PATH `ffmpeg`. */
+export function getFfmpegPath(): string {
+  if (cachedFfmpegPath) return cachedFfmpegPath;
+  const env = process.env.FFMPEG_PATH?.trim();
+  if (env && existsSync(env)) {
+    cachedFfmpegPath = env;
+    return env;
+  }
+  if (ffmpegStatic != null && ffmpegStatic.length > 0 && existsSync(ffmpegStatic)) {
+    cachedFfmpegPath = ffmpegStatic;
+    return ffmpegStatic;
+  }
+  cachedFfmpegPath = "ffmpeg";
+  return cachedFfmpegPath;
+}
+
+/** Prefer FFPROBE_PATH, then npm `@ffprobe-installer/ffprobe`, then PATH `ffprobe`. */
+export function getFfprobePath(): string {
+  if (cachedFfprobePath) return cachedFfprobePath;
+  const env = process.env.FFPROBE_PATH?.trim();
+  if (env && existsSync(env)) {
+    cachedFfprobePath = env;
+    return env;
+  }
+  const p = ffprobeInstaller.path;
+  if (p && existsSync(p)) {
+    cachedFfprobePath = p;
+    return p;
+  }
+  cachedFfprobePath = "ffprobe";
+  return cachedFfprobePath;
+}
 
 function runCmd(
   cmd: string,
@@ -29,6 +68,15 @@ function runCmd(
     });
     child.on("error", (e) => {
       clearTimeout(timeout);
+      const err = e as NodeJS.ErrnoException;
+      if (err.code === "ENOENT") {
+        reject(
+          new Error(
+            `${cmd} not found (${err.message}). Install ffmpeg/ffprobe on the server PATH (e.g. brew install ffmpeg on macOS), or use bundled binaries via npm (ffmpeg-static / @ffprobe-installer/ffprobe). Set FFMPEG_PATH / FFPROBE_PATH to override.`,
+          ),
+        );
+        return;
+      }
       reject(e);
     });
     child.on("close", (code) => {
@@ -39,7 +87,7 @@ function runCmd(
 }
 
 export async function assertFfmpegAvailable(): Promise<void> {
-  const r = await runCmd("ffmpeg", ["-version"], { timeoutMs: 5000 });
+  const r = await runCmd(getFfmpegPath(), ["-version"], { timeoutMs: 5000 });
   if (r.code !== 0) {
     throw new Error("ffmpeg not found or failed. Install ffmpeg and ensure it is on PATH.");
   }
@@ -47,7 +95,7 @@ export async function assertFfmpegAvailable(): Promise<void> {
 
 export async function ffprobeDurationSeconds(videoUrlOrPath: string): Promise<number> {
   const r = await runCmd(
-    "ffprobe",
+    getFfprobePath(),
     [
       "-v",
       "error",
@@ -106,11 +154,23 @@ export async function downloadVideoToTempFile(url: string): Promise<{ filePath: 
 }
 
 export async function extractAudioMp3(inputPath: string, outMp3: string): Promise<void> {
-  const r = await runCmd("ffmpeg", ["-y", "-i", inputPath, "-vn", "-acodec", "libmp3lame", "-q:a", "4", outMp3], {
+  const r = await runCmd(getFfmpegPath(), ["-y", "-i", inputPath, "-vn", "-acodec", "libmp3lame", "-q:a", "4", outMp3], {
     timeoutMs: 600_000,
   });
   if (r.code !== 0) {
     throw new Error(`extract_audio failed: ${r.stderr.slice(-800)}`);
+  }
+}
+
+/** Single PNG frame at `tSec` seconds (used for local OCR on keyframes). */
+export async function extractFramePngAtSecond(inputPath: string, outPng: string, tSec: number): Promise<void> {
+  const r = await runCmd(
+    "ffmpeg",
+    ["-y", "-ss", String(Math.max(0, tSec)), "-i", inputPath, "-frames:v", "1", "-vf", "scale=720:-1", outPng],
+    { timeoutMs: 120_000 },
+  );
+  if (r.code !== 0) {
+    throw new Error(`extract_frame_at failed: ${r.stderr.slice(-800)}`);
   }
 }
 
@@ -124,7 +184,7 @@ export async function extractFramesPng(
   const pattern = path.join(outDir, "f-%04d.png");
   const vf = fps > 0 ? `fps=${fps}` : "fps=0.5";
   const r = await runCmd(
-    "ffmpeg",
+    getFfmpegPath(),
     ["-y", "-i", inputPath, "-vf", `${vf},scale=720:-1`, "-frames:v", String(maxFrames), pattern],
     { timeoutMs: 600_000 },
   );
@@ -137,7 +197,7 @@ export async function extractFramesPng(
 
 export async function muxVideoAndAudio(videoPath: string, audioPath: string, outPath: string): Promise<void> {
   const r = await runCmd(
-    "ffmpeg",
+    getFfmpegPath(),
     [
       "-y",
       "-i",
@@ -164,7 +224,7 @@ export async function muxVideoAndAudio(videoPath: string, audioPath: string, out
 
 export async function concatVideosFromList(listFile: string, outPath: string): Promise<void> {
   const r = await runCmd(
-    "ffmpeg",
+    getFfmpegPath(),
     ["-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", outPath],
     { timeoutMs: 600_000 },
   );

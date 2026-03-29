@@ -3,7 +3,11 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { DEFAULT_WORKFLOW_GRAPH } from "@/lib/default-graph";
 import { assertAcyclic, workflowGraphSchema } from "@/lib/workflow-graph";
+import { analyzeMarketingVideoFromUrl } from "@/lib/marketing-video-analyzer";
 import { buildReplicateWorkflowFromVideoUrl } from "@/lib/replicate-marketing-template";
+
+/** Long-running: download + OpenCV segmentation + optional Whisper/Tesseract. */
+export const maxDuration = 300;
 
 export async function GET() {
   const session = await auth();
@@ -47,8 +51,10 @@ export async function POST(req: Request) {
     if (!/^https?:\/\//i.test(videoUrl)) {
       return NextResponse.json({ error: "videoUrl must be a valid http(s) URL" }, { status: 400 });
     }
+    const runAnalyze = Boolean((rawBody as { analyze?: boolean }).analyze);
     try {
-      const graph = buildReplicateWorkflowFromVideoUrl(videoUrl);
+      const analysis = runAnalyze ? await analyzeMarketingVideoFromUrl(videoUrl) : undefined;
+      const graph = buildReplicateWorkflowFromVideoUrl(videoUrl, analysis);
       graphJson = JSON.stringify(graph);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
