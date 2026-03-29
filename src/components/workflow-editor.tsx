@@ -244,13 +244,58 @@ function InputVideoNode({ id, data }: NodeProps) {
 }
 
 function MediaProcessNode({ id, data }: NodeProps) {
-  const d = data as { operation?: string };
+  const d = data as { operation?: string; previewItems?: RunOutputItem[] };
   const op = d.operation ?? "extract_audio";
+  const items = d.previewItems ?? [];
+  const imageItems = items.filter((x) => x.kind === "image" || x.kind === "unknown");
+  const videoItem = items.find((x) => x.kind === "video");
+  const audioItem = items.find((x) => x.kind === "audio");
   return (
-    <div className="min-w-[220px] max-w-[280px] rounded-lg border border-teal-500/45 bg-zinc-900/90 px-3 py-2 pr-2 shadow-lg">
+    <div className="min-w-[220px] max-w-[min(100vw,400px)] rounded-lg border border-teal-500/45 bg-zinc-900/90 px-3 py-2 pr-2 shadow-lg">
       <div className="mb-1 text-xs font-medium uppercase tracking-wide text-teal-400">Media process</div>
       <div className="text-[10px] text-zinc-500">Node {id.slice(0, 8)}…</div>
       <p className="mt-1 font-mono text-xs text-teal-200/90">{op}</p>
+      {imageItems.length > 0 ? (
+        <div className="mt-2 space-y-1">
+          <div className="max-h-48 overflow-y-auto rounded border border-zinc-800/90 bg-zinc-950/60 p-1.5">
+            <div className="grid grid-cols-3 gap-1">
+              {imageItems.map((it, i) => (
+                <a
+                  key={`${it.url}-${i}`}
+                  href={it.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="relative aspect-video overflow-hidden rounded border border-zinc-700/90 bg-black/40 outline-none ring-teal-500/30 transition hover:ring-2"
+                  title="Open full size"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={it.url} alt="" className="h-full w-full object-cover" loading="lazy" />
+                </a>
+              ))}
+            </div>
+          </div>
+          <p className="text-[9px] leading-snug text-zinc-500">
+            {imageItems.length} frame{imageItems.length === 1 ? "" : "s"} from last run. Change source video or{" "}
+            <span className="font-mono text-zinc-400">fps</span> /{" "}
+            <span className="font-mono text-zinc-400">maxFrames</span> in the sidebar, then re-run. To swap URLs
+            manually, use an <span className="font-mono text-zinc-400">Input group</span> of images instead of{" "}
+            <span className="font-mono text-zinc-400">extract_frames</span>.
+          </p>
+        </div>
+      ) : videoItem ? (
+        <div className="mt-2">
+          <video
+            src={videoItem.url}
+            controls
+            playsInline
+            className="max-h-40 w-full rounded border border-zinc-700 bg-black"
+          />
+        </div>
+      ) : audioItem ? (
+        <div className="mt-2">
+          <audio src={audioItem.url} controls className="w-full min-w-0" />
+        </div>
+      ) : null}
       <div className="relative mt-3 min-h-[72px]">
         <Handle
           type="target"
@@ -1022,6 +1067,14 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
   const nodesForFlow = useMemo(() => {
     return nodes.map((n) => {
       if (n.type === "output_preview") {
+        const items = artifactPreviewByNodeId[n.id];
+        if (!items?.length) return n;
+        return {
+          ...n,
+          data: { ...(n.data as Record<string, unknown>), previewItems: items },
+        };
+      }
+      if (n.type === "media_process") {
         const items = artifactPreviewByNodeId[n.id];
         if (!items?.length) return n;
         return {
