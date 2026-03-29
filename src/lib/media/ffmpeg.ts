@@ -241,3 +241,94 @@ export async function writeConcatListFile(filePaths: string[], outList: string):
   const lines = filePaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`);
   await writeFile(outList, lines.join("\n"), "utf8");
 }
+
+/**
+ * Download a remote image URL to a temp file (size-capped). Extension from URL or default `.bin`.
+ */
+export async function downloadImageToTempFile(url: string): Promise<{ filePath: string; cleanup: () => Promise<void> }> {
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error("Only http(s) image URLs are allowed");
+  }
+  const dir = await mkdtemp(path.join(tmpdir(), "cp-img-"));
+  const lower = url.split("?")[0]?.toLowerCase() ?? "";
+  const ext = /\.jpe?g(\?|$)/i.test(lower)
+    ? ".jpg"
+    : /\.png(\?|$)/i.test(lower)
+      ? ".png"
+      : /\.webp(\?|$)/i.test(lower)
+        ? ".webp"
+        : ".png";
+  const filePath = path.join(dir, `input${ext}`);
+  const res = await fetch(url, {
+    redirect: "follow",
+    headers: { "User-Agent": "CarrotParrotCommunity/1.0" },
+  });
+  if (!res.ok) {
+    await rm(dir, { recursive: true, force: true });
+    throw new Error(`Download failed: ${res.status}`);
+  }
+  const len = res.headers.get("content-length");
+  if (len && Number(len) > MAX_DOWNLOAD_BYTES) {
+    await rm(dir, { recursive: true, force: true });
+    throw new Error("Image file too large");
+  }
+  const ab = await res.arrayBuffer();
+  if (ab.byteLength > MAX_DOWNLOAD_BYTES) {
+    await rm(dir, { recursive: true, force: true });
+    throw new Error("Image file too large");
+  }
+  await writeFile(filePath, Buffer.from(ab));
+  return {
+    filePath,
+    cleanup: async () => {
+      await rm(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+/**
+ * Convert each local image file to `frame-0001.png`, `frame-0002.png`, … in `outDir`.
+ */
+export async function normalizeImagesToPngSequence(localPaths: string[], outDir: string): Promise<void> {
+  await mkdir(outDir, { recursive: true });
+  for (let i = 0; i < localPaths.length; i++) {
+    const out = path.join(outDir, `frame-${String(i + 1).padStart(4, "0")}.png`);
+    const r = await runCmd(getFfmpegPath(), ["-y", "-i", localPaths[i], out], { timeoutMs: 120_000 });
+    if (r.code !== 0) {
+      throw new Error(`normalize image failed: ${r.stderr.slice(-400)}`);
+    }
+  }
+}
+
+/**
+ * Encode a numbered image sequence `frame-0001.png` … in `frameDir` to H.264 MP4.
+ * Each frame is shown for `secondsPerFrame` seconds (`-framerate` = 1/secondsPerFrame before `-i`).
+ */
+export async function imagesSequenceToMp4(
+  frameDir: string,
+  secondsPerFrame: number,
+  outPath: string,
+  options?: { maxWidth?: number },
+): Promise<void> {
+  const spf = Math.min(60, Math.max(0.05, secondsPerFrame));
+  const inRate = 1 / spf;
+  const mw = options?.maxWidth;
+  const pattern = path.join(frameDir, "frame-%04d.png");
+  const args: string[] = [
+    "-y",
+    "-framerate",
+    String(inRate),
+    "-start_number",
+    "1",
+    "-i",
+    pattern,
+  ];
+  if (mw != null && mw > 0) {
+    args.push("-vf", `scale=w=min(${mw}\\,iw):h=-2`);
+  }
+  args.push("-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", outPath);
+  const r = await runCmd(getFfmpegPath(), args, { timeoutMs: 600_000 });
+  if (r.code !== 0) {
+    throw new Error(`images_to_video failed: ${r.stderr.slice(-800)}`);
+  }
+}

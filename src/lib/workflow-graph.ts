@@ -51,6 +51,7 @@ export const mediaProcessOperationSchema = z.enum([
   "segment_scenes",
   "concat_videos",
   "mux_audio_video",
+  "images_to_video",
 ]);
 
 const mediaProcessParamsSchema = z
@@ -58,6 +59,10 @@ const mediaProcessParamsSchema = z
     fps: z.number().optional(),
     maxFrames: z.number().optional(),
     sceneThreshold: z.number().optional(),
+    /** Seconds each image is shown (slideshow → MP4). */
+    secondsPerFrame: z.number().optional(),
+    /** Optional max width; height scales proportionally. */
+    maxWidth: z.number().optional(),
   })
   .optional();
 

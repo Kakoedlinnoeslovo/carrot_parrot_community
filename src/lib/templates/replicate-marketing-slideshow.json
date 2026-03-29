@@ -1,0 +1,68 @@
+{
+  "nodes": [
+    {
+      "id": "iv1",
+      "type": "input_video",
+      "data": { "videoUrl": "" },
+      "position": { "x": 0, "y": 120 }
+    },
+    {
+      "id": "in_prompt",
+      "type": "input_prompt",
+      "data": { "prompt": "Polished marketing frame, keep composition" },
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "mp_audio",
+      "type": "media_process",
+      "data": { "operation": "extract_audio", "params": {} },
+      "position": { "x": 260, "y": 40 }
+    },
+    {
+      "id": "mp_frames",
+      "type": "media_process",
+      "data": { "operation": "extract_frames", "params": { "fps": 0.5, "maxFrames": 8 } },
+      "position": { "x": 260, "y": 200 }
+    },
+    {
+      "id": "nano1",
+      "type": "fal_model",
+      "data": {
+        "falModelId": "fal-ai/nano-banana-2/edit",
+        "falInput": { "prompt": "Polished marketing frame, keep composition" }
+      },
+      "position": { "x": 520, "y": 120 }
+    },
+    {
+      "id": "mp_slideshow",
+      "type": "media_process",
+      "data": {
+        "operation": "images_to_video",
+        "params": { "secondsPerFrame": 0.5, "maxFrames": 8 }
+      },
+      "position": { "x": 780, "y": 120 }
+    },
+    {
+      "id": "mp_mux",
+      "type": "media_process",
+      "data": { "operation": "mux_audio_video", "params": {} },
+      "position": { "x": 1040, "y": 120 }
+    },
+    {
+      "id": "out1",
+      "type": "output_preview",
+      "data": { "title": "Final slideshow" },
+      "position": { "x": 1300, "y": 120 }
+    }
+  ],
+  "edges": [
+    { "id": "e_iv_audio", "source": "iv1", "target": "mp_audio", "sourceHandle": "video", "targetHandle": "video_url" },
+    { "id": "e_iv_frames", "source": "iv1", "target": "mp_frames", "sourceHandle": "video", "targetHandle": "video_url" },
+    { "id": "e_frames_nano", "source": "mp_frames", "target": "nano1", "sourceHandle": "out", "targetHandle": "image_urls" },
+    { "id": "e_prompt_nano", "source": "in_prompt", "target": "nano1", "sourceHandle": "prompt", "targetHandle": "prompt" },
+    { "id": "e_nano_slideshow", "source": "nano1", "target": "mp_slideshow", "sourceHandle": "out", "targetHandle": "image_urls" },
+    { "id": "e_slideshow_mux", "source": "mp_slideshow", "target": "mp_mux", "sourceHandle": "out", "targetHandle": "video_url" },
+    { "id": "e_audio_mux", "source": "mp_audio", "target": "mp_mux", "sourceHandle": "out", "targetHandle": "audio_url" },
+    { "id": "e_mux_out", "source": "mp_mux", "target": "out1", "sourceHandle": "out", "targetHandle": "in" }
+  ]
+}

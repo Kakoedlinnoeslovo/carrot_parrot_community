@@ -132,7 +132,13 @@ export function flowToGraph(nodes: Node[], edges: Edge[]): WorkflowGraph {
     if (n.type === "media_process") {
       const d = n.data as {
         operation?: string;
-        params?: { fps?: number; maxFrames?: number; sceneThreshold?: number };
+        params?: {
+          fps?: number;
+          maxFrames?: number;
+          sceneThreshold?: number;
+          secondsPerFrame?: number;
+          maxWidth?: number;
+        };
       };
       let op = d.operation;
       if (
@@ -140,7 +146,8 @@ export function flowToGraph(nodes: Node[], edges: Edge[]): WorkflowGraph {
         op !== "extract_frames" &&
         op !== "segment_scenes" &&
         op !== "concat_videos" &&
-        op !== "mux_audio_video"
+        op !== "mux_audio_video" &&
+        op !== "images_to_video"
       ) {
         op = "extract_audio";
       }

@@ -105,7 +105,7 @@ function inferTargetWireExpectation(
   if (!n) return "any";
   if (n.type === "media_process") {
     const h = targetHandle ?? "";
-    if (/^(video_url|audio_url)$/i.test(h)) return "image";
+    if (/^(video_url|audio_url|image_urls)$/i.test(h)) return "image";
     return "any";
   }
   if (n.type === "output_preview") return "image";
@@ -251,23 +251,31 @@ function MediaProcessNode({ id, data }: NodeProps) {
       <div className="mb-1 text-xs font-medium uppercase tracking-wide text-teal-400">Media process</div>
       <div className="text-[10px] text-zinc-500">Node {id.slice(0, 8)}…</div>
       <p className="mt-1 font-mono text-xs text-teal-200/90">{op}</p>
-      <div className="relative mt-3 min-h-[52px]">
+      <div className="relative mt-3 min-h-[72px]">
         <Handle
           type="target"
           position={Position.Left}
           id="video_url"
-          className={`${FLOW_HANDLE_BASE} !absolute !left-0 !top-[22%] !-translate-x-0 !-translate-y-1/2 !border-teal-500/40 !bg-teal-600`}
+          className={`${FLOW_HANDLE_BASE} !absolute !left-0 !top-[18%] !-translate-x-0 !-translate-y-1/2 !border-teal-500/40 !bg-teal-600`}
           title="video_url"
         />
         <Handle
           type="target"
           position={Position.Left}
+          id="image_urls"
+          className={`${FLOW_HANDLE_BASE} !absolute !left-0 !top-[50%] !-translate-x-0 !-translate-y-1/2 !border-teal-500/40 !bg-teal-600`}
+          title="image_urls — image sequence for images_to_video"
+        />
+        <Handle
+          type="target"
+          position={Position.Left}
           id="audio_url"
-          className={`${FLOW_HANDLE_BASE} !absolute !left-0 !top-[78%] !-translate-x-0 !-translate-y-1/2 !border-teal-500/40 !bg-teal-600`}
+          className={`${FLOW_HANDLE_BASE} !absolute !left-0 !top-[82%] !-translate-x-0 !-translate-y-1/2 !border-teal-500/40 !bg-teal-600`}
           title="audio_url"
         />
-        <div className="pointer-events-none flex h-full flex-col justify-between py-1 pl-4 text-[9px] text-zinc-500">
+        <div className="pointer-events-none flex h-full flex-col justify-between py-0.5 pl-4 text-[9px] text-zinc-500">
           <span className="font-mono">video_url</span>
+          <span className="font-mono">image_urls</span>
           <span className="font-mono">audio_url</span>
         </div>
         <Handle
@@ -535,6 +543,7 @@ const MEDIA_PROCESS_OPS = [
   "segment_scenes",
   "concat_videos",
   "mux_audio_video",
+  "images_to_video",
 ] as const;
 
 function InputGroupNodeSettings({
@@ -1766,43 +1775,135 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
                   </option>
                 ))}
               </select>
-              <label className="text-xs text-zinc-500">Params (extract_frames)</label>
-              <div className="flex gap-2">
-                <input
-                  type="number"
-                  step="0.1"
-                  min={0.1}
-                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-100"
-                  placeholder="fps"
-                  value={Number((selectedNode.data as { params?: { fps?: number } }).params?.fps ?? "") || ""}
-                  onChange={(e) => {
-                    const v = e.target.value === "" ? undefined : Number(e.target.value);
-                    updateSelectedData({
-                      params: {
-                        ...((selectedNode.data as { params?: Record<string, unknown> }).params ?? {}),
-                        ...(v != null && !Number.isNaN(v) ? { fps: v } : { fps: undefined }),
-                      },
-                    });
-                  }}
-                />
-                <input
-                  type="number"
-                  min={1}
-                  max={48}
-                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-100"
-                  placeholder="maxFrames"
-                  value={Number((selectedNode.data as { params?: { maxFrames?: number } }).params?.maxFrames ?? "") || ""}
-                  onChange={(e) => {
-                    const v = e.target.value === "" ? undefined : Number(e.target.value);
-                    updateSelectedData({
-                      params: {
-                        ...((selectedNode.data as { params?: Record<string, unknown> }).params ?? {}),
-                        ...(v != null && !Number.isNaN(v) ? { maxFrames: v } : { maxFrames: undefined }),
-                      },
-                    });
-                  }}
-                />
-              </div>
+              {String((selectedNode.data as { operation?: string }).operation ?? "") === "extract_frames" ? (
+                <>
+                  <label className="text-xs text-zinc-500">Params (extract_frames)</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min={0.1}
+                      className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-100"
+                      placeholder="fps"
+                      value={
+                        Number((selectedNode.data as { params?: { fps?: number } }).params?.fps ?? "") || ""
+                      }
+                      onChange={(e) => {
+                        const v = e.target.value === "" ? undefined : Number(e.target.value);
+                        updateSelectedData({
+                          params: {
+                            ...((selectedNode.data as { params?: Record<string, unknown> }).params ?? {}),
+                            ...(v != null && !Number.isNaN(v) ? { fps: v } : { fps: undefined }),
+                          },
+                        });
+                      }}
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      max={48}
+                      className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-100"
+                      placeholder="maxFrames"
+                      value={
+                        Number((selectedNode.data as { params?: { maxFrames?: number } }).params?.maxFrames ?? "") ||
+                        ""
+                      }
+                      onChange={(e) => {
+                        const v = e.target.value === "" ? undefined : Number(e.target.value);
+                        updateSelectedData({
+                          params: {
+                            ...((selectedNode.data as { params?: Record<string, unknown> }).params ?? {}),
+                            ...(v != null && !Number.isNaN(v) ? { maxFrames: v } : { maxFrames: undefined }),
+                          },
+                        });
+                      }}
+                    />
+                  </div>
+                </>
+              ) : null}
+              {String((selectedNode.data as { operation?: string }).operation ?? "") === "images_to_video" ? (
+                <>
+                  <label className="text-xs text-zinc-500">Params (images_to_video)</label>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex gap-2">
+                      <input
+                        type="number"
+                        step="0.05"
+                        min={0.05}
+                        max={60}
+                        className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-100"
+                        placeholder="secondsPerFrame"
+                        title="Seconds each image is shown"
+                        value={
+                          Number(
+                            (selectedNode.data as { params?: { secondsPerFrame?: number } }).params
+                              ?.secondsPerFrame ?? "",
+                          ) || ""
+                        }
+                        onChange={(e) => {
+                          const v = e.target.value === "" ? undefined : Number(e.target.value);
+                          updateSelectedData({
+                            params: {
+                              ...((selectedNode.data as { params?: Record<string, unknown> }).params ?? {}),
+                              ...(v != null && !Number.isNaN(v)
+                                ? { secondsPerFrame: v }
+                                : { secondsPerFrame: undefined }),
+                            },
+                          });
+                        }}
+                      />
+                      <input
+                        type="number"
+                        min={1}
+                        max={48}
+                        className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-100"
+                        placeholder="maxFrames"
+                        title="Max images from upstream (cap)"
+                        value={
+                          Number(
+                            (selectedNode.data as { params?: { maxFrames?: number } }).params?.maxFrames ?? "",
+                          ) || ""
+                        }
+                        onChange={(e) => {
+                          const v = e.target.value === "" ? undefined : Number(e.target.value);
+                          updateSelectedData({
+                            params: {
+                              ...((selectedNode.data as { params?: Record<string, unknown> }).params ?? {}),
+                              ...(v != null && !Number.isNaN(v) ? { maxFrames: v } : { maxFrames: undefined }),
+                            },
+                          });
+                        }}
+                      />
+                    </div>
+                    <input
+                      type="number"
+                      min={64}
+                      max={4096}
+                      step={1}
+                      className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-100"
+                      placeholder="maxWidth (optional)"
+                      title="Optional max width in pixels; height scales"
+                      value={
+                        Number((selectedNode.data as { params?: { maxWidth?: number } }).params?.maxWidth ?? "") ||
+                        ""
+                      }
+                      onChange={(e) => {
+                        const v = e.target.value === "" ? undefined : Number(e.target.value);
+                        updateSelectedData({
+                          params: {
+                            ...((selectedNode.data as { params?: Record<string, unknown> }).params ?? {}),
+                            ...(v != null && !Number.isNaN(v) ? { maxWidth: v } : { maxWidth: undefined }),
+                          },
+                        });
+                      }}
+                    />
+                  </div>
+                  <p className="text-[11px] leading-snug text-zinc-600">
+                    Wire upstream <span className="font-mono">out</span> to <span className="font-mono">image_urls</span>{" "}
+                    (e.g. extract_frames or nano-banana). Produces one MP4 slideshow.
+                  </p>
+                </>
+              ) : null}
               <p className="text-[11px] text-zinc-600">
                 Requires <span className="font-mono">ffmpeg</span> on the server. Outputs upload to fal storage.
               </p>

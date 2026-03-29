@@ -4,11 +4,14 @@ import type { FalClient } from "@/lib/fal-client";
 import {
   assertFfmpegAvailable,
   concatVideosFromList,
+  downloadImageToTempFile,
   downloadVideoToTempFile,
   extractAudioMp3,
   extractFramesPng,
   ffprobeDurationSeconds,
+  imagesSequenceToMp4,
   muxVideoAndAudio,
+  normalizeImagesToPngSequence,
   readFileBuffer,
   writeConcatListFile,
 } from "@/lib/media/ffmpeg";
@@ -78,6 +81,13 @@ export function collectMediaProcessInputs(
       if (v) {
         videoUrl = v;
         if (!videoUrls.includes(v)) videoUrls.push(v);
+      }
+      continue;
+    }
+    if (th === "image_urls" || th === "images") {
+      const ims = images.length ? images : art?.images ?? [];
+      for (const im of ims) {
+        if (!imageUrls.includes(im)) imageUrls.push(im);
       }
       continue;
     }
@@ -186,6 +196,37 @@ export async function runMediaProcessNode(
         await writeConcatListFile(localPaths, listFile);
         const out = path.join(workDir, "concat-out.mp4");
         await concatVideosFromList(listFile, out);
+        const buf = await readFileBuffer(out);
+        const uploaded = await uploadBlob(fal, buf, "video/mp4");
+        return { images: [], media: [{ url: uploaded, kind: "video" }], text: undefined };
+      } finally {
+        for (const c of cleanups) {
+          await c();
+        }
+      }
+    }
+
+    if (op === "images_to_video") {
+      const urls = inputs.imageUrls;
+      const maxFrames = Math.min(48, Math.max(1, params?.maxFrames ?? 48));
+      const slice = urls.slice(0, maxFrames);
+      if (slice.length < 1) throw new Error("images_to_video: need at least one image URL from upstream");
+      const secondsPerFrame = Math.min(60, Math.max(0.05, params?.secondsPerFrame ?? 0.5));
+      const maxWidth = params?.maxWidth;
+      const seqDir = path.join(workDir, "seq");
+      const localPaths: string[] = [];
+      const cleanups: Array<() => Promise<void>> = [];
+      try {
+        for (const u of slice) {
+          const dl = await downloadImageToTempFile(u);
+          localPaths.push(dl.filePath);
+          cleanups.push(dl.cleanup);
+        }
+        await normalizeImagesToPngSequence(localPaths, seqDir);
+        const out = path.join(workDir, `slideshow-${randomUUID()}.mp4`);
+        await imagesSequenceToMp4(seqDir, secondsPerFrame, out, {
+          maxWidth: maxWidth != null && maxWidth > 0 ? maxWidth : undefined,
+        });
         const buf = await readFileBuffer(out);
         const uploaded = await uploadBlob(fal, buf, "video/mp4");
         return { images: [], media: [{ url: uploaded, kind: "video" }], text: undefined };

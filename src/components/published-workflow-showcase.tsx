@@ -154,18 +154,24 @@ function PublishedMediaProcessNode({ data }: NodeProps) {
     <div className="motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-out min-w-[200px] max-w-[260px] rounded-xl border border-teal-500/25 bg-zinc-950/55 px-3 py-2 shadow-[0_12px_40px_rgba(0,0,0,0.35)] backdrop-blur-xl">
       <div className="text-[10px] font-semibold uppercase tracking-wide text-teal-300/90">Media process</div>
       <p className="mt-1 font-mono text-[11px] text-teal-200/90">{op}</p>
-      <div className="relative mt-3 min-h-[44px]">
+      <div className="relative mt-3 min-h-[52px]">
         <Handle
           type="target"
           position={Position.Left}
           id="video_url"
-          className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !top-[25%] !-translate-y-1/2 !bg-teal-500/90`}
+          className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !top-[20%] !-translate-y-1/2 !bg-teal-500/90`}
+        />
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="image_urls"
+          className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !top-[50%] !-translate-y-1/2 !bg-teal-500/90`}
         />
         <Handle
           type="target"
           position={Position.Left}
           id="audio_url"
-          className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !top-[75%] !-translate-y-1/2 !bg-teal-500/90`}
+          className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !top-[80%] !-translate-y-1/2 !bg-teal-500/90`}
         />
         <Handle
           type="source"

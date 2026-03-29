@@ -26,6 +26,16 @@ Connect an **IMAGE** node and **TEXT** node to a **FAL** node; map each wire to 
 
 Models such as [`openrouter/router/vision`](https://fal.ai/models/openrouter/router/vision) return a JSON object with an `output` string (caption), not image URLs. In this studio, each fal node exposes a single **`out`** port typed as **text + media URLs**: connect **`out`** to the next node’s **`prompt`** (or **`image_url`**, **`start_image_url`**, etc.) by attaching to that input’s handle. The runner stores captions in artifacts so **`prompt`** wires get plain text. On fal’s hosted Workflow editor, map the vision model’s string output into **`prompt`** the same way—do not pass the whole JSON object into a string field.
 
+### Frames → video
+
+**`mux_audio_video`** always expects a **video URL** on `video_url` and **audio** on `audio_url` ([`mux_audio_video`](src/lib/media-process-runner.ts)). It does not assemble a frame sequence into video; use one of the paths below.
+
+- **Path A — Slideshow (server-side ffmpeg)**: Nodes that output **image URLs** (`extract_frames`, `fal-ai/nano-banana-2/edit`, or **input_group** slots) → **`media_process`** **`images_to_video`** (wire **`out`** → **`image_urls`**). Params: **`secondsPerFrame`**, optional **`maxFrames`** cap, optional **`maxWidth`**. Output is one MP4; connect that to **`mux_audio_video`** `video_url` with **`extract_audio`** on `audio_url`.
+- **Path B — Nanobanana + fal image-to-video**: **`nano-banana` `out`** → **`start_image_url`** on Kling (or similar) → **`mux_audio_video`** `video_url` ← generated video, **`extract_audio`** → `audio_url`. The merge step uses the **first** image URL for single-URL fields like `start_image_url` ([`mergeFalInput`](src/lib/fal-merge-input.ts)).
+- **Path C — Original video + audio**: **`input_video`** (or any upstream **video** artifact) → **`mux_audio_video`** `video_url`, **`extract_audio`** → `audio_url`.
+
+Example graph (slideshow branch): [`src/lib/templates/replicate-marketing-slideshow.json`](src/lib/templates/replicate-marketing-slideshow.json). The Kling marketing template is still [`replicate-marketing-ad.json`](src/lib/templates/replicate-marketing-ad.json).
+
 ## Features
 
 - **Studio** — XYFlow-based graph editor; nodes map to fal models (metadata from `/api/models`).
@@ -44,7 +54,7 @@ Models such as [`openrouter/router/vision`](https://fal.ai/models/openrouter/rou
 - Node.js 20+  
 - A [fal.ai](https://fal.ai) API key per user (saved after sign-up, encrypted with `AUTH_SECRET`) or an optional operator key `FAL_KEY` for dev / shared billing  
 - For local webhooks, a publicly reachable `NEXT_PUBLIC_APP_URL` (e.g. [ngrok](https://ngrok.com) or similar) so fal can POST back to your machine  
-- **FFmpeg** — `ffmpeg` and `ffprobe` on the server `PATH` for `media_process` nodes (extract audio/frames, concat, mux, scene helpers). Outputs upload via fal storage; large videos may need long timeouts or a background worker instead of a serverless request.
+- **FFmpeg** — `ffmpeg` and `ffprobe` on the server `PATH` for `media_process` nodes (extract audio/frames, concat, mux, **images → MP4 slideshow**, scene helpers). Outputs upload via fal storage; large videos may need long timeouts or a background worker instead of a serverless request.
 - **Marketing “create from video”** — `/studio/create` uses demo clips from `public/marketing-ads/` (copied from the repo’s `marketing ads/` folder). The page calls `POST /api/marketing/analyze-video` then `POST /api/workflows` with the returned analysis so progress can show analyze vs save. **Free** server-side analysis: OpenCV optical-flow segmentation (`scripts/segment_optical_flow.py`, requires `opencv-python-headless`), optional **Whisper** CLI (`pip install openai-whisper`, `whisper` on `PATH`) for local ASR, optional **Tesseract** for OCR. If those are missing, the pipeline falls back to FFmpeg scene heuristics and leaves ASR/OCR hints empty. **Workflow generation and analysis are not billed to the user**; **fal** generative calls and fal storage still use the user’s API key (or `FAL_KEY`) like the rest of Studio.
 
 ## Setup
