@@ -20,6 +20,8 @@ export const AnalyticsEvent = {
   canvasAddNode: "canvas_add_node",
   canvasConnect: "canvas_connect",
   canvasDeleteNode: "canvas_delete_node",
+  canvasCopyNode: "canvas_copy_node",
+  canvasPasteNode: "canvas_paste_node",
 
   workflowSaveSuccess: "workflow_save_success",
   workflowSaveError: "workflow_save_error",
