@@ -30,6 +30,12 @@ export function sanitizeFalInput(input: Record<string, unknown>): Record<string,
       delete out[k];
     }
   }
+  // Omit empty strings so queue APIs apply JSON Schema defaults (e.g. Kling AI Avatar `prompt` defaults to ".").
+  for (const k of Object.keys(out)) {
+    if (typeof out[k] === "string" && out[k].trim() === "") {
+      delete out[k];
+    }
+  }
   const urls = out.image_urls;
   if (Array.isArray(urls)) {
     const filtered = urls.filter((u) => typeof u === "string" && u.trim() !== "");
