@@ -27,6 +27,17 @@ describe("sanitizeFalInput", () => {
     expect(out.image_urls).toBeUndefined();
   });
 
+  it("drops empty string fields so optional defaults apply (e.g. Kling AI Avatar prompt)", () => {
+    const out = sanitizeFalInput({
+      image_url: "https://cdn.example.com/a.jpg",
+      audio_url: "https://cdn.example.com/a.mp3",
+      prompt: "",
+    });
+    expect(out.prompt).toBeUndefined();
+    expect(out.image_url).toBe("https://cdn.example.com/a.jpg");
+    expect(out.audio_url).toBe("https://cdn.example.com/a.mp3");
+  });
+
   it("removes null and undefined keys so APIs do not receive explicit null", () => {
     const out = sanitizeFalInput({
       prompt: "hi",
@@ -152,5 +163,87 @@ describe("mergeFalInput", () => {
     });
     expect(out.start_image_url).toBe("https://cdn.example.com/frame.png");
     expect(out.image_url).toBeUndefined();
+  });
+
+  /**
+   * ElevenLabs TTS (and similar) put audio in `media` with kind `audio`, not in `images`.
+   * Kling AI Avatar requires `audio_url` + `image_url`; merge must still pick up the MP3 URL.
+   */
+  it("out → audio_url for Kling AI Avatar when upstream audio is only in media[] (TTS)", () => {
+    const g: WorkflowGraph = {
+      nodes: [
+        {
+          id: "tts",
+          type: "fal_model",
+          data: { falModelId: "fal-ai/elevenlabs/tts/eleven-v3", falInput: {} },
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "kling",
+          type: "fal_model",
+          data: {
+            falModelId: "fal-ai/kling-video/ai-avatar/v2/pro",
+            falInput: {},
+          },
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [
+        { id: "e1", source: "tts", target: "kling", sourceHandle: "out", targetHandle: "audio_url" },
+      ],
+    };
+    const out = mergeFalInput(g.nodes[1] as Extract<(typeof g.nodes)[1], { type: "fal_model" }>, g, {
+      tts: {
+        images: [],
+        media: [{ url: "https://v3.fal.media/files/rabbit/tts_output.mp3", kind: "audio" }],
+      },
+    });
+    expect(out.audio_url).toBe("https://v3.fal.media/files/rabbit/tts_output.mp3");
+  });
+
+  it("merges image + audio wires for Kling AI Avatar (typical lip-sync graph)", () => {
+    const g: WorkflowGraph = {
+      nodes: [
+        {
+          id: "portrait",
+          type: "input_image",
+          data: { imageUrl: "https://cdn.example.com/face.jpg" },
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "tts",
+          type: "fal_model",
+          data: { falModelId: "fal-ai/elevenlabs/tts/eleven-v3", falInput: {} },
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "kling",
+          type: "fal_model",
+          data: {
+            falModelId: "fal-ai/kling-video/ai-avatar/v2/pro",
+            falInput: { prompt: "" },
+          },
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [
+        { id: "e1", source: "portrait", target: "kling", sourceHandle: "image", targetHandle: "image_url" },
+        { id: "e2", source: "tts", target: "kling", sourceHandle: "out", targetHandle: "audio_url" },
+      ],
+    };
+    const merged = mergeFalInput(g.nodes[2] as Extract<(typeof g.nodes)[2], { type: "fal_model" }>, g, {
+      portrait: {
+        images: ["https://cdn.example.com/face.jpg"],
+        media: [{ url: "https://cdn.example.com/face.jpg", kind: "image" }],
+      },
+      tts: {
+        images: [],
+        media: [{ url: "https://v3.fal.media/files/rabbit/speech.mp3", kind: "audio" }],
+      },
+    });
+    const sanitized = sanitizeFalInput(merged);
+    expect(sanitized.image_url).toBe("https://cdn.example.com/face.jpg");
+    expect(sanitized.audio_url).toBe("https://v3.fal.media/files/rabbit/speech.mp3");
+    expect(sanitized.prompt).toBeUndefined();
   });
 });

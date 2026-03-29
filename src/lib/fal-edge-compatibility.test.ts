@@ -100,6 +100,25 @@ describe("classifyEdgeCompatibility", () => {
     });
     expect(r.level).toBe("ok");
   });
+
+  it("does not error when TTS (audio output) wires to audio_url on Kling AI Avatar", () => {
+    const tts = {
+      id: "tts",
+      type: "fal_model" as const,
+      data: {
+        falModelId: "fal-ai/elevenlabs/tts/eleven-v3",
+        falInput: {},
+        openapiOutputKeys: ["audio", "duration"],
+      },
+      position: { x: 0, y: 0 },
+    };
+    const r = classifyEdgeCompatibility({
+      source: tts,
+      targetHandle: "audio_url",
+      sourceHandle: "out",
+    });
+    expect(r.level).toBe("ok");
+  });
 });
 
 describe("classifyWorkflowGraphEdges", () => {
