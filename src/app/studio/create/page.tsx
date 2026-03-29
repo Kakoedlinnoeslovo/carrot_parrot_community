@@ -4,29 +4,39 @@ import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import Link from "next/link";
 
-/** Curated public sample videos (landscape demos; vertical 9:16 cards crop in UI). */
-const EXAMPLE_VIDEOS = [
-  {
-    id: "bbb",
-    title: "Big Buck Bunny",
-    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-    gradient: "from-amber-900/80 to-orange-950/90",
-  },
-  {
-    id: "ed",
-    title: "Elephants Dream",
-    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
-    gradient: "from-violet-900/80 to-zinc-950/90",
-  },
-  {
-    id: "sintel",
-    title: "Sintel",
-    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
-    gradient: "from-cyan-900/80 to-slate-950/90",
-  },
-] as const;
+import { MarketingExamplesCarousel } from "@/components/marketing-examples-carousel";
+import type { MarketingVideoAnalysis } from "@/lib/marketing-video-analyzer";
 
 type Phase = "idle" | "uploading" | "creating";
+
+function CreateProgressBar({
+  mode,
+  percent,
+}: {
+  mode: "hidden" | "indeterminate" | "determinate";
+  percent: number;
+}) {
+  if (mode === "hidden") return null;
+  return (
+    <div
+      className="mt-4 h-2 w-full overflow-hidden rounded-full bg-zinc-800"
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={mode === "determinate" ? Math.round(percent) : undefined}
+      aria-busy
+    >
+      {mode === "indeterminate" ? (
+        <div className="h-full rounded-full bg-orange-500 create-progress-indeterminate" />
+      ) : (
+        <div
+          className="h-full rounded-full bg-orange-500 transition-[width] duration-300 ease-out"
+          style={{ width: `${percent}%` }}
+        />
+      )}
+    </div>
+  );
+}
 
 export default function CreateMarketingWorkflowPage() {
   const router = useRouter();
@@ -35,6 +45,8 @@ export default function CreateMarketingWorkflowPage() {
   const [error, setError] = useState<string | null>(null);
   const [progressLabel, setProgressLabel] = useState("");
   const [skipAnalysis, setSkipAnalysis] = useState(false);
+  const [progressMode, setProgressMode] = useState<"hidden" | "indeterminate" | "determinate">("hidden");
+  const [progressPercent, setProgressPercent] = useState(0);
 
   const pickExample = useCallback((url: string) => {
     setVideoUrl(url);
@@ -68,12 +80,49 @@ export default function CreateMarketingWorkflowPage() {
     }
     setError(null);
     setPhase("creating");
-    setProgressLabel(
-      skipAnalysis
-        ? "Creating workflow from template…"
-        : "Analyzing video (segmentation + optional local ASR/OCR), then building workflow…",
-    );
+    setProgressLabel("");
+    setProgressPercent(0);
+
     try {
+      if (skipAnalysis) {
+        setProgressLabel("Creating workflow from template…");
+        setProgressMode("indeterminate");
+        const res = await fetch("/api/workflows", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            template: "replicate-marketing-ad",
+            videoUrl: trimmed,
+            title: "Marketing ad replica",
+            analyze: false,
+          }),
+        });
+        const j = (await res.json()) as { workflow?: { id: string }; error?: string };
+        if (!res.ok) throw new Error(j.error ?? "Create failed");
+        const id = j.workflow?.id;
+        if (!id) throw new Error("No workflow id");
+        setProgressMode("determinate");
+        setProgressPercent(100);
+        setProgressLabel("Opening Studio…");
+        router.push(`/studio/${id}`);
+        return;
+      }
+
+      setProgressLabel("Analyzing video (segmentation, optional ASR/OCR)…");
+      setProgressMode("indeterminate");
+      setProgressPercent(0);
+      const ar = await fetch("/api/marketing/analyze-video", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoUrl: trimmed }),
+      });
+      const aj = (await ar.json()) as { analysis?: MarketingVideoAnalysis; error?: string };
+      if (!ar.ok) throw new Error(aj.error ?? "Analysis failed");
+      if (!aj.analysis) throw new Error("No analysis returned");
+      setProgressMode("determinate");
+      setProgressPercent(50);
+
+      setProgressLabel("Saving workflow…");
       const res = await fetch("/api/workflows", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -81,13 +130,15 @@ export default function CreateMarketingWorkflowPage() {
           template: "replicate-marketing-ad",
           videoUrl: trimmed,
           title: "Marketing ad replica",
-          analyze: !skipAnalysis,
+          analyze: false,
+          analysis: aj.analysis,
         }),
       });
       const j = (await res.json()) as { workflow?: { id: string }; error?: string };
       if (!res.ok) throw new Error(j.error ?? "Create failed");
       const id = j.workflow?.id;
       if (!id) throw new Error("No workflow id");
+      setProgressPercent(100);
       setProgressLabel("Opening Studio…");
       router.push(`/studio/${id}`);
     } catch (e) {
@@ -95,47 +146,38 @@ export default function CreateMarketingWorkflowPage() {
     } finally {
       setPhase("idle");
       setProgressLabel("");
+      setProgressMode("hidden");
+      setProgressPercent(0);
     }
   }
 
   const busy = phase === "uploading" || phase === "creating";
 
+  const showProgress =
+    phase === "uploading" || (phase === "creating" && (progressMode !== "hidden" || progressLabel));
+
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10">
+    <div className="mx-auto max-w-4xl px-6 py-10">
       <p className="text-sm font-medium text-orange-400">Marketing ad pipeline</p>
       <h1 className="mt-2 text-2xl font-semibold text-zinc-100">Create from video</h1>
       <p className="mt-2 text-sm leading-relaxed text-zinc-400">
         Paste a public video URL or upload a file (stored on fal).{" "}
-        <span className="text-zinc-300">
-          Video analysis and workflow generation are free
-        </span>
-        : we segment the ad with FFmpeg/OpenCV (optical flow when Python is available), optionally run local
-        speech-to-text (Whisper CLI) and on-screen text OCR (Tesseract) if those tools are on the server.{" "}
-        <span className="text-zinc-300">Generative fal steps</span> (Nano Banana, Kling, storage uploads) use
-        your saved fal API key or credits as elsewhere in Studio.
+        <span className="text-zinc-300">Video analysis and workflow generation are free</span>: we segment the ad with
+        FFmpeg/OpenCV (optical flow when Python is available), optionally run local speech-to-text (Whisper CLI) and
+        on-screen text OCR (Tesseract) if those tools are on the server.{" "}
+        <span className="text-zinc-300">Generative fal steps</span> (Nano Banana, Kling, storage uploads) use your saved
+        fal API key or credits as elsewhere in Studio.
       </p>
 
       <div className="mt-8">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Inspiration</h2>
-        <div className="mt-3 flex gap-4 overflow-x-auto pb-2 [scrollbar-width:thin]">
-          {EXAMPLE_VIDEOS.map((ex) => (
-            <button
-              key={ex.id}
-              type="button"
-              onClick={() => pickExample(ex.url)}
-              className={`group relative w-[140px] shrink-0 overflow-hidden rounded-xl border bg-zinc-900 text-left ring-1 transition-colors ${
-                videoUrl === ex.url ? "border-orange-500/60 ring-orange-500/30" : "border-white/10 ring-white/5 hover:border-white/20"
-              }`}
-              style={{ aspectRatio: "9 / 16" }}
-            >
-              <div
-                className={`flex h-full w-full flex-col justify-end bg-gradient-to-br p-3 text-left ${ex.gradient}`}
-              >
-                <span className="text-[11px] font-medium leading-snug text-white/95">{ex.title}</span>
-                <span className="mt-1 text-[9px] text-white/60">Tap to use URL</span>
-              </div>
-            </button>
-          ))}
+        <p className="mt-1 text-xs text-zinc-600">
+          Demo clips are served from{" "}
+          <code className="rounded bg-zinc-900 px-1 text-zinc-500">/marketing-ads/*</code> (see{" "}
+          <code className="rounded bg-zinc-900 px-1 text-zinc-500">public/marketing-ads</code>).
+        </p>
+        <div className="mt-4">
+          <MarketingExamplesCarousel videoUrl={videoUrl} onPickUrl={pickExample} />
         </div>
       </div>
 
@@ -175,11 +217,21 @@ export default function CreateMarketingWorkflowPage() {
         </label>
       </div>
 
-      {progressLabel ? (
-        <p className="mt-4 text-sm text-cyan-400" role="status">
-          {progressLabel}
-        </p>
+      {showProgress ? (
+        <>
+          {progressLabel ? (
+            <p className="mt-4 text-sm text-cyan-400" role="status">
+              {progressLabel}
+            </p>
+          ) : null}
+          {phase === "uploading" ? (
+            <CreateProgressBar mode="indeterminate" percent={0} />
+          ) : phase === "creating" ? (
+            <CreateProgressBar mode={progressMode} percent={progressPercent} />
+          ) : null}
+        </>
       ) : null}
+
       {error ? (
         <p className="mt-4 text-sm text-red-400" role="alert">
           {error}
@@ -193,7 +245,7 @@ export default function CreateMarketingWorkflowPage() {
           onClick={() => void onCreate()}
           className="rounded-lg bg-orange-500 px-5 py-2.5 text-sm font-medium text-white hover:bg-orange-400 disabled:opacity-50"
         >
-          {phase === "creating" ? "Creating…" : "Create workflow"}
+          {phase === "creating" ? "Working…" : "Create workflow"}
         </button>
         <Link
           href="/studio"

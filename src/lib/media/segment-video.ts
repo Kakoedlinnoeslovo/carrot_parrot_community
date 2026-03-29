@@ -104,7 +104,14 @@ export async function segmentScenesWithOpticalFlow(
     const fb = await segmentScenesWithFfmpeg(videoPath, sceneThreshold, durationSec);
     return { segments: fb.segments, method: fb.method };
   }
-  const r = await runCmd("python3", [scriptPath, videoPath], 600_000);
+  let r: { stdout: string; stderr: string; code: number | null };
+  try {
+    r = await runCmd("python3", [scriptPath, videoPath], 600_000);
+  } catch {
+    // Missing python3, timeout, or other spawn failure — FFmpeg scene detection still works.
+    const fb = await segmentScenesWithFfmpeg(videoPath, sceneThreshold, durationSec);
+    return { segments: fb.segments, method: fb.method };
+  }
   if (r.code !== 0) {
     const fb = await segmentScenesWithFfmpeg(videoPath, sceneThreshold, durationSec);
     return { segments: fb.segments, method: fb.method };

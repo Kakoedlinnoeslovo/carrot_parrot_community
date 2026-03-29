@@ -173,3 +173,18 @@ body {
     animation: none !important;
   }
 }
+
+/* Create-from-video: indeterminate progress while a single long request runs */
+@keyframes create-progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.create-progress-indeterminate {
+  width: 35%;
+  animation: create-progress-indeterminate 1.25s ease-in-out infinite;
+}

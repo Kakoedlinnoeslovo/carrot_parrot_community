@@ -165,7 +165,7 @@ export async function extractAudioMp3(inputPath: string, outMp3: string): Promis
 /** Single PNG frame at `tSec` seconds (used for local OCR on keyframes). */
 export async function extractFramePngAtSecond(inputPath: string, outPng: string, tSec: number): Promise<void> {
   const r = await runCmd(
-    "ffmpeg",
+    getFfmpegPath(),
     ["-y", "-ss", String(Math.max(0, tSec)), "-i", inputPath, "-frames:v", "1", "-vf", "scale=720:-1", outPng],
     { timeoutMs: 120_000 },
   );

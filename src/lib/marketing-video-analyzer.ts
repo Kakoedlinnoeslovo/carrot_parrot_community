@@ -2,6 +2,7 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp } from "node:fs/promises";
+import { z } from "zod";
 
 import {
   assertFfmpegAvailable,
@@ -11,17 +12,25 @@ import {
   ffprobeDurationSeconds,
 } from "@/lib/media/ffmpeg";
 import { ocrImageWithTesseract, transcribeAudioWithWhisperCli } from "@/lib/media/local-text-extract";
-import { segmentScenesWithOpticalFlow, type SceneSegmentationMethod, type VideoSegment } from "@/lib/media/segment-video";
+import { segmentScenesWithOpticalFlow } from "@/lib/media/segment-video";
 
-export type MarketingVideoAnalysis = {
-  durationSec: number;
-  segments: VideoSegment[];
-  segmentationMethod: SceneSegmentationMethod;
-  speechText: string;
-  ocrText: string;
-  speechFromLocalAsr: boolean;
-  textFromLocalOcr: boolean;
-};
+export const marketingVideoAnalysisSchema = z.object({
+  durationSec: z.number(),
+  segments: z.array(z.object({ start: z.number(), end: z.number() })),
+  segmentationMethod: z.enum(["optical_flow", "ffmpeg_scene", "equal"]),
+  speechText: z.string(),
+  ocrText: z.string(),
+  speechFromLocalAsr: z.boolean(),
+  textFromLocalOcr: z.boolean(),
+});
+
+export type MarketingVideoAnalysis = z.infer<typeof marketingVideoAnalysisSchema>;
+
+export function parseMarketingVideoAnalysis(raw: unknown): { ok: true; data: MarketingVideoAnalysis } | { ok: false; error: z.ZodError } {
+  const r = marketingVideoAnalysisSchema.safeParse(raw);
+  if (r.success) return { ok: true, data: r.data };
+  return { ok: false, error: r.error };
+}
 
 const MAX_OCR_FRAMES = 3;
 

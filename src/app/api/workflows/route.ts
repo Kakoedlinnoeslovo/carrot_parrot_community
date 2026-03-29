@@ -3,7 +3,11 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { DEFAULT_WORKFLOW_GRAPH } from "@/lib/default-graph";
 import { assertAcyclic, workflowGraphSchema } from "@/lib/workflow-graph";
-import { analyzeMarketingVideoFromUrl } from "@/lib/marketing-video-analyzer";
+import {
+  analyzeMarketingVideoFromUrl,
+  type MarketingVideoAnalysis,
+  parseMarketingVideoAnalysis,
+} from "@/lib/marketing-video-analyzer";
 import { buildReplicateWorkflowFromVideoUrl } from "@/lib/replicate-marketing-template";
 
 /** Long-running: download + OpenCV segmentation + optional Whisper/Tesseract. */
@@ -52,8 +56,21 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "videoUrl must be a valid http(s) URL" }, { status: 400 });
     }
     const runAnalyze = Boolean((rawBody as { analyze?: boolean }).analyze);
+    const rawAnalysis = (rawBody as { analysis?: unknown }).analysis;
     try {
-      const analysis = runAnalyze ? await analyzeMarketingVideoFromUrl(videoUrl) : undefined;
+      let analysis: MarketingVideoAnalysis | undefined;
+      if (runAnalyze) {
+        analysis = await analyzeMarketingVideoFromUrl(videoUrl);
+      } else if (rawAnalysis != null && typeof rawAnalysis === "object") {
+        const parsed = parseMarketingVideoAnalysis(rawAnalysis);
+        if (!parsed.ok) {
+          return NextResponse.json(
+            { error: "Invalid analysis JSON", details: parsed.error.flatten() },
+            { status: 400 },
+          );
+        }
+        analysis = parsed.data;
+      }
       const graph = buildReplicateWorkflowFromVideoUrl(videoUrl, analysis);
       graphJson = JSON.stringify(graph);
     } catch (e) {
