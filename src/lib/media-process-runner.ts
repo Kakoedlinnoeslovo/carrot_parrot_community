@@ -163,8 +163,8 @@ export async function runMediaProcessNode(
       try {
         const dur = await ffprobeDurationSeconds(dl.filePath);
         const th = params?.sceneThreshold ?? 0.35;
-        const segments = await segmentScenesWithOpticalFlow(dl.filePath, dur, th);
-        const text = JSON.stringify({ segments, durationSec: dur });
+        const { segments, method } = await segmentScenesWithOpticalFlow(dl.filePath, dur, th);
+        const text = JSON.stringify({ segments, durationSec: dur, segmentationMethod: method });
         return { images: [], media: [], text };
       } finally {
         await dl.cleanup();

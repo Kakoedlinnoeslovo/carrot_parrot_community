@@ -1,8 +1,12 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { getFfmpegPath } from "@/lib/media/ffmpeg";
 
 export type VideoSegment = { start: number; end: number };
+
+/** How scene boundaries were derived (optical flow script vs FFmpeg heuristics). */
+export type SceneSegmentationMethod = "optical_flow" | "ffmpeg_scene" | "equal";
 
 function runCmd(cmd: string, args: string[], timeoutMs = 600_000): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve, reject) => {
@@ -21,6 +25,15 @@ function runCmd(cmd: string, args: string[], timeoutMs = 600_000): Promise<{ std
     });
     child.on("error", (e) => {
       clearTimeout(t);
+      const err = e as NodeJS.ErrnoException;
+      if (err.code === "ENOENT") {
+        reject(
+          new Error(
+            `${cmd} not found (${err.message}). Install ffmpeg on PATH (e.g. brew install ffmpeg) or use bundled ffmpeg-static from npm.`,
+          ),
+        );
+        return;
+      }
       reject(e);
     });
     child.on("close", (code) => {
@@ -38,8 +51,8 @@ export async function segmentScenesWithFfmpeg(
   videoPath: string,
   sceneThreshold: number,
   durationSec: number,
-): Promise<VideoSegment[]> {
-  const r = await runCmd("ffmpeg", [
+): Promise<{ segments: VideoSegment[]; method: "ffmpeg_scene" | "equal" }> {
+  const r = await runCmd(getFfmpegPath(), [
     "-i",
     videoPath,
     "-vf",
@@ -59,10 +72,11 @@ export async function segmentScenesWithFfmpeg(
   if (ptsTimes.length === 0) {
     const n = Math.min(4, Math.max(1, Math.ceil(durationSec / 6)));
     const segLen = durationSec / n;
-    return Array.from({ length: n }, (_, i) => ({
+    const segments = Array.from({ length: n }, (_, i) => ({
       start: i * segLen,
       end: Math.min(durationSec, (i + 1) * segLen),
     }));
+    return { segments, method: "equal" };
   }
   const cuts = [0, ...ptsTimes.filter((t) => t > 0 && t < durationSec), durationSec];
   const unique = [...new Set(cuts)].sort((a, b) => a - b);
@@ -72,7 +86,8 @@ export async function segmentScenesWithFfmpeg(
     const end = unique[i + 1]!;
     if (end - start > 0.05) out.push({ start, end });
   }
-  return out.length ? out : [{ start: 0, end: durationSec }];
+  const segments = out.length ? out : [{ start: 0, end: durationSec }];
+  return { segments, method: "ffmpeg_scene" };
 }
 
 /**
@@ -83,22 +98,25 @@ export async function segmentScenesWithOpticalFlow(
   videoPath: string,
   durationSec: number,
   sceneThreshold: number,
-): Promise<VideoSegment[]> {
+): Promise<{ segments: VideoSegment[]; method: SceneSegmentationMethod }> {
   const scriptPath = path.join(process.cwd(), "scripts", "segment_optical_flow.py");
   if (!existsSync(scriptPath)) {
-    return segmentScenesWithFfmpeg(videoPath, sceneThreshold, durationSec);
+    const fb = await segmentScenesWithFfmpeg(videoPath, sceneThreshold, durationSec);
+    return { segments: fb.segments, method: fb.method };
   }
   const r = await runCmd("python3", [scriptPath, videoPath], 600_000);
   if (r.code !== 0) {
-    return segmentScenesWithFfmpeg(videoPath, sceneThreshold, durationSec);
+    const fb = await segmentScenesWithFfmpeg(videoPath, sceneThreshold, durationSec);
+    return { segments: fb.segments, method: fb.method };
   }
   try {
     const raw = JSON.parse(r.stdout.trim()) as { segments?: VideoSegment[] };
     if (Array.isArray(raw.segments) && raw.segments.length > 0) {
-      return raw.segments;
+      return { segments: raw.segments, method: "optical_flow" };
     }
   } catch {
     /* fall through */
   }
-  return segmentScenesWithFfmpeg(videoPath, sceneThreshold, durationSec);
+  const fb = await segmentScenesWithFfmpeg(videoPath, sceneThreshold, durationSec);
+  return { segments: fb.segments, method: fb.method };
 }

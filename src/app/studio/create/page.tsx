@@ -34,6 +34,7 @@ export default function CreateMarketingWorkflowPage() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [progressLabel, setProgressLabel] = useState("");
+  const [skipAnalysis, setSkipAnalysis] = useState(false);
 
   const pickExample = useCallback((url: string) => {
     setVideoUrl(url);
@@ -67,7 +68,11 @@ export default function CreateMarketingWorkflowPage() {
     }
     setError(null);
     setPhase("creating");
-    setProgressLabel("Creating workflow from marketing template…");
+    setProgressLabel(
+      skipAnalysis
+        ? "Creating workflow from template…"
+        : "Analyzing video (segmentation + optional local ASR/OCR), then building workflow…",
+    );
     try {
       const res = await fetch("/api/workflows", {
         method: "POST",
@@ -76,6 +81,7 @@ export default function CreateMarketingWorkflowPage() {
           template: "replicate-marketing-ad",
           videoUrl: trimmed,
           title: "Marketing ad replica",
+          analyze: !skipAnalysis,
         }),
       });
       const j = (await res.json()) as { workflow?: { id: string }; error?: string };
@@ -99,9 +105,14 @@ export default function CreateMarketingWorkflowPage() {
       <p className="text-sm font-medium text-orange-400">Marketing ad pipeline</p>
       <h1 className="mt-2 text-2xl font-semibold text-zinc-100">Create from video</h1>
       <p className="mt-2 text-sm leading-relaxed text-zinc-400">
-        Paste a public video URL or upload a file (stored on fal). We generate a Studio workflow from the
-        baseline template (extract audio/frames → Nano Banana → Kling → mux). Analysis uses FFmpeg on the
-        server; generative steps use your fal quota.
+        Paste a public video URL or upload a file (stored on fal).{" "}
+        <span className="text-zinc-300">
+          Video analysis and workflow generation are free
+        </span>
+        : we segment the ad with FFmpeg/OpenCV (optical flow when Python is available), optionally run local
+        speech-to-text (Whisper CLI) and on-screen text OCR (Tesseract) if those tools are on the server.{" "}
+        <span className="text-zinc-300">Generative fal steps</span> (Nano Banana, Kling, storage uploads) use
+        your saved fal API key or credits as elsewhere in Studio.
       </p>
 
       <div className="mt-8">
@@ -138,7 +149,17 @@ export default function CreateMarketingWorkflowPage() {
           disabled={busy}
           onChange={(e) => setVideoUrl(e.target.value)}
         />
-        <label className="inline-flex cursor-pointer items-center rounded-lg border border-zinc-600 bg-zinc-800 px-4 py-2 text-sm text-zinc-200 hover:bg-zinc-700 disabled:opacity-50">
+        <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-zinc-400">
+          <input
+            type="checkbox"
+            checked={skipAnalysis}
+            disabled={busy}
+            onChange={(e) => setSkipAnalysis(e.target.checked)}
+            className="rounded border-zinc-600"
+          />
+          Skip analysis (faster; baseline template only, no segment/ASR/OCR hints in prompts)
+        </label>
+        <label className="mt-4 inline-flex cursor-pointer items-center rounded-lg border border-zinc-600 bg-zinc-800 px-4 py-2 text-sm text-zinc-200 hover:bg-zinc-700 disabled:opacity-50">
           {phase === "uploading" ? "Uploading…" : "Upload video"}
           <input
             type="file"
