@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
+  ReactFlowProvider,
   Background,
   Controls,
   MiniMap,
   addEdge,
   useEdgesState,
   useNodesState,
+  useReactFlow,
   type Connection,
   type Edge,
   type Node,
@@ -20,6 +22,11 @@ import "@xyflow/react/dist/style.css";
 import Link from "next/link";
 import { nanoid } from "nanoid";
 import { graphToFlow, flowToGraph } from "@/lib/flow-adapter";
+import {
+  parseWorkflowClipboard,
+  remapSingleNodePaste,
+  serializeWorkflowClipboard,
+} from "@/lib/workflow-clipboard";
 import type { WorkflowGraph } from "@/lib/workflow-graph";
 import { FAL_WORKFLOW_TEMPLATES } from "@/lib/fal-workflow-templates";
 import { FalModelForm } from "@/components/fal-model-form";
@@ -694,7 +701,47 @@ type Props = {
   slug: string | null;
 };
 
-export function WorkflowEditor({ workflowId, initialGraph, title, visibility, slug }: Props) {
+function isEditableClipboardTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  return Boolean(target.closest('[contenteditable="true"]'));
+}
+
+function FlowClipboardBridge({
+  onCopy,
+  onPasteAtFlowPosition,
+}: {
+  onCopy: () => boolean;
+  onPasteAtFlowPosition: (pos: { x: number; y: number }) => Promise<boolean>;
+}) {
+  const rf = useReactFlow();
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!e.metaKey && !e.ctrlKey) return;
+      if (isEditableClipboardTarget(e.target)) return;
+
+      if (e.key === "c" || e.key === "C") {
+        if (onCopy()) e.preventDefault();
+      } else if (e.key === "v" || e.key === "V") {
+        e.preventDefault();
+        const p = rf.screenToFlowPosition({
+          x: window.innerWidth / 2,
+          y: window.innerHeight / 2,
+        });
+        void onPasteAtFlowPosition(p);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [rf, onCopy, onPasteAtFlowPosition]);
+
+  return null;
+}
+
+function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slug }: Props) {
   const initial = useMemo(() => graphToFlow(initialGraph), [initialGraph]);
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
@@ -727,6 +774,9 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
   const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
   const detailRequestedRef = useRef<Set<string>>(new Set());
   const runTerminalLoggedRef = useRef<string | null>(null);
+  /** Last pointer position on the flow pane (flow coords); used when adding nodes from the toolbar. */
+  const lastPaneFlowPosRef = useRef<{ x: number; y: number } | null>(null);
+  const rf = useReactFlow();
   const [falKeyBanner, setFalKeyBanner] = useState(false);
 
   useEffect(() => {
@@ -945,6 +995,47 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
     deleteNodesById(new Set([selectedId]));
   }, [selectedId, deleteNodesById]);
 
+  const handleClipboardCopy = useCallback((): boolean => {
+    if (!selectedId) return false;
+    const node = nodes.find((n) => n.id === selectedId);
+    if (!node) return false;
+    const graph = flowToGraph([node], []);
+    const text = serializeWorkflowClipboard(graph);
+    void navigator.clipboard.writeText(text).then(() => {
+      track(AnalyticsEvent.canvasCopyNode, { workflowId });
+    });
+    return true;
+  }, [selectedId, nodes, workflowId]);
+
+  const handleClipboardPaste = useCallback(
+    async (flowPosition: { x: number; y: number }): Promise<boolean> => {
+      let text: string;
+      try {
+        text = await navigator.clipboard.readText();
+      } catch {
+        return false;
+      }
+      const parsed = parseWorkflowClipboard(text);
+      if (!parsed) return false;
+      const remapped = remapSingleNodePaste(parsed);
+      const flow = graphToFlow(remapped);
+      const newNode = flow.nodes[0];
+      if (!newNode) return false;
+      newNode.position = {
+        x: flowPosition.x - 100,
+        y: flowPosition.y - 40,
+      };
+      setNodes((nds) => [
+        ...nds.map((n) => ({ ...n, selected: false })),
+        { ...newNode, selected: true },
+      ]);
+      setSelectedId(newNode.id);
+      track(AnalyticsEvent.canvasPasteNode, { workflowId });
+      return true;
+    },
+    [setNodes, workflowId],
+  );
+
   const isValidConnection = useCallback(
     (connection: Connection | Edge) => isWorkflowConnectionValid(nodes, connection),
     [nodes],
@@ -987,10 +1078,14 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
   ) => {
     track(AnalyticsEvent.canvasAddNode, { nodeType: kind });
     const id = nanoid(10);
-    const y = 40 + nodes.length * 28;
+    const fallback = {
+      x: 120 + (nodes.length % 3) * 40,
+      y: 40 + nodes.length * 28,
+    };
+    const position = lastPaneFlowPosRef.current ?? fallback;
     const base: Node = {
       id,
-      position: { x: 120 + (nodes.length % 3) * 40, y },
+      position,
       type: kind,
       data:
         kind === "input_prompt"
@@ -1202,6 +1297,12 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
               nds.map((node) => ({ ...node, selected: node.id === n.id })),
             );
           }}
+          onPaneMouseMove={(e) => {
+            lastPaneFlowPosRef.current = rf.screenToFlowPosition({
+              x: e.clientX,
+              y: e.clientY,
+            });
+          }}
           onPaneClick={() => {
             setSelectedId(null);
             setNodes((nds) => nds.map((node) => ({ ...node, selected: false })));
@@ -1219,6 +1320,7 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
           <Background gap={20} size={1} color="#333" />
           <MiniMap className="!bg-zinc-900" />
           <Controls className="!bg-zinc-900 !text-zinc-200 !border-zinc-700" />
+          <FlowClipboardBridge onCopy={handleClipboardCopy} onPasteAtFlowPosition={handleClipboardPaste} />
         </ReactFlow>
         <div className="pointer-events-none absolute left-4 top-4 flex flex-col gap-2">
           <div className="pointer-events-auto flex gap-2">
@@ -1575,5 +1677,13 @@ export function WorkflowEditor({ workflowId, initialGraph, title, visibility, sl
       </aside>
       </div>
     </div>
+  );
+}
+
+export function WorkflowEditor(props: Props) {
+  return (
+    <ReactFlowProvider>
+      <WorkflowEditorCanvas {...props} />
+    </ReactFlowProvider>
   );
 }
