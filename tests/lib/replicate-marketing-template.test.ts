@@ -16,6 +16,12 @@ describe("replicate-marketing-template", () => {
     if (iv?.type === "input_video") {
       expect(iv.data.videoUrl).toBe(url);
     }
+    const kf = g.nodes.find((n) => n.id === "mp_kf" && n.type === "media_process");
+    expect(kf?.type).toBe("media_process");
+    if (kf?.type === "media_process") {
+      expect(kf.data.params?.keyframeMaxSegments).toBe(6);
+    }
+    expect(g.nodes.filter((n) => n.id.startsWith("vision_")).length).toBe(6);
     expect(validateReplicateMarketingGraph(JSON.stringify(g))).toBe(true);
   });
 

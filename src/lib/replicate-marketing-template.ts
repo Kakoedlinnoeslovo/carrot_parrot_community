@@ -69,10 +69,11 @@ export function getReplicateMarketingAdTemplate(): WorkflowGraph {
  * Optional Kling i2v: replace each `slide_*` `images_to_video` node with `fal-ai/kling-video/.../image-to-video`
  * and wire `nano_*` `out` → `start_image_url`, optionally inserting a motion-caption `openrouter/router/vision` node.
  *
- * @param lanes Number of parallel lanes (1–4). Each lane uses one keyframe index = lane index.
+ * @param lanes Number of parallel lanes (1–12). Each lane uses one keyframe index = lane index.
+ * `extract_keyframes` uses `keyframeMaxSegments: K` (capped at 24 in the runner).
  */
 export function buildMarketingRemixLanesGraph(lanes: number): WorkflowGraph {
-  const K = Math.min(4, Math.max(1, Math.floor(lanes)));
+  const K = Math.min(12, Math.max(1, Math.floor(lanes)));
   const nodes: WorkflowNode[] = [];
   const edges: WorkflowEdge[] = [];
 
@@ -312,7 +313,7 @@ export function buildMarketingRemixLanesGraph(lanes: number): WorkflowGraph {
 }
 
 /**
- * Default marketing remix: 2 lanes (2 optical-flow keyframes). Video URL injected at `iv1`.
+ * Default marketing remix: 6 parallel lanes (up to 6 optical-flow keyframes). Video URL injected at `iv1`.
  */
 export function buildReplicateWorkflowFromVideoUrl(
   videoUrl: string,
@@ -322,7 +323,7 @@ export function buildReplicateWorkflowFromVideoUrl(
   if (!/^https?:\/\//i.test(trimmed)) {
     throw new Error("Video URL must start with http:// or https://");
   }
-  const g = buildMarketingRemixLanesGraph(2);
+  const g = buildMarketingRemixLanesGraph(6);
   const iv = g.nodes.find((n) => n.id === "iv1" && n.type === "input_video");
   if (!iv || iv.type !== "input_video") {
     throw new Error("Template missing input_video iv1");

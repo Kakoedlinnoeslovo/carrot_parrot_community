@@ -34,6 +34,7 @@ import type { RJSFSchema } from "@rjsf/utils";
 import { computePrimaryImageInputKey } from "@/lib/fal-openapi-wiring";
 import { listMappableInputKeysFromSchema, listMappableOutputKeysFromSchema } from "@/lib/fal-schema-handles";
 import { AnalyticsEvent, track } from "@/lib/analytics";
+import { parseArtifactJson } from "@/lib/artifact-json";
 
 /** True when the server rejected a request because no fal.ai key is configured for this user. */
 function responseIndicatesMissingFalKey(status: number, errorText: string | undefined): boolean {
@@ -1101,6 +1102,8 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
   const [artifactPreviewByNodeId, setArtifactPreviewByNodeId] = useState<
     Record<string, RunOutputItem[]>
   >({});
+  /** Plain text from each step's artifact (vision captions, etc.) for sidebar when node `data` is still empty. */
+  const [stepArtifactTextByNodeId, setStepArtifactTextByNodeId] = useState<Record<string, string>>({});
   const [workflowStreamEvents, setWorkflowStreamEvents] = useState<WorkflowEventRow[]>([]);
   const [origin, setOrigin] = useState("");
   /** Per-node run step status while a run is in progress (from GET /api/runs/:id). */
@@ -1231,6 +1234,19 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
     selectedNode?.type === "fal_model"
       ? String((selectedNode.data as { falModelId?: string }).falModelId ?? "")
       : "";
+
+  const reviewGateCaption = useMemo(() => {
+    if (selectedNode?.type !== "review_gate") return null;
+    const visionEdge = edges.find(
+      (e) => e.target === selectedNode.id && e.targetHandle === "in",
+    );
+    const visionId = visionEdge?.source ?? null;
+    const rawStored = String((selectedNode.data as { text?: string }).text ?? "");
+    const fromRun = visionId ? (stepArtifactTextByNodeId[visionId] ?? "") : "";
+    const displayValue = rawStored.length > 0 ? rawStored : fromRun;
+    const hydratedFromVision = rawStored.length === 0 && fromRun.trim().length > 0;
+    return { visionId, displayValue, hydratedFromVision };
+  }, [selectedNode, edges, stepArtifactTextByNodeId]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -1527,12 +1543,17 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       }
       setRunStepByNodeId(stepStatusMap);
       const byNode: Record<string, RunOutputItem[]> = {};
+      const textByNode: Record<string, string> = {};
       for (const s of steps) {
         if (s.nodeId && s.outputsJson) {
           byNode[s.nodeId] = collectRunOutputs([{ outputsJson: s.outputsJson }]);
+          const a = parseArtifactJson(s.outputsJson);
+          const t = typeof a.text === "string" ? a.text.trim() : "";
+          if (t) textByNode[s.nodeId] = a.text as string;
         }
       }
       setArtifactPreviewByNodeId(byNode);
+      setStepArtifactTextByNodeId(textByNode);
       if (data.run.status === "succeeded" || data.run.status === "failed") {
         clearInterval(t);
         if (runId && runTerminalLoggedRef.current !== runId) {
@@ -1585,6 +1606,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
     runTerminalLoggedRef.current = null;
     setRunOutputs([]);
     setArtifactPreviewByNodeId({});
+    setStepArtifactTextByNodeId({});
     setWorkflowStreamEvents([]);
     setOutputsMissing(false);
     setRunError(null);
@@ -1622,7 +1644,14 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       const gateTexts: Record<string, string> = {};
       for (const n of nodes) {
         if (n.type === "review_gate") {
-          gateTexts[n.id] = String((n.data as { text?: string }).text ?? "");
+          const raw = String((n.data as { text?: string }).text ?? "");
+          const visionEdge = edges.find((e) => e.target === n.id && e.targetHandle === "in");
+          const visionId = visionEdge?.source;
+          const fromVision =
+            visionId && stepArtifactTextByNodeId[visionId]
+              ? stepArtifactTextByNodeId[visionId]
+              : "";
+          gateTexts[n.id] = raw.trim().length > 0 ? raw : fromVision;
         }
       }
       const res = await fetch(`/api/runs/${runId}/resume`, {
@@ -1997,9 +2026,14 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
               <textarea
                 className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
                 rows={5}
-                value={String((selectedNode.data as { text?: string }).text ?? "")}
+                value={reviewGateCaption?.displayValue ?? ""}
                 onChange={(e) => updateSelectedData({ text: e.target.value })}
               />
+              {reviewGateCaption?.hydratedFromVision ? (
+                <p className="text-[11px] leading-snug text-zinc-500">
+                  Showing text from the vision step above. Edit here, then Resume when ready.
+                </p>
+              ) : null}
               <p className="text-[11px] leading-snug text-zinc-600">
                 Wire <span className="font-mono">in</span> from vision (text). Optional <span className="font-mono">barrier_in</span> from{" "}
                 <span className="font-mono">sync_barrier</span> so all lanes align before pause.
