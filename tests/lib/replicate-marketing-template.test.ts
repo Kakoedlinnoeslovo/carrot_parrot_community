@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { MarketingVideoAnalysis } from "@/lib/marketing-video-analyzer";
 import {
   buildMarketingRemixLanesGraph,
+  buildMarketingRemixManualKeyframesGraph,
+  buildReplicateManualKeyframeWorkflowFromVideoUrl,
   buildReplicateWorkflowFromVideoUrl,
   getReplicateMarketingAdTemplate,
   validateReplicateMarketingGraph,
@@ -23,6 +25,39 @@ describe("replicate-marketing-template", () => {
     }
     expect(g.nodes.filter((n) => n.id.startsWith("vision_")).length).toBe(6);
     expect(validateReplicateMarketingGraph(JSON.stringify(g))).toBe(true);
+  });
+
+  it("manual keyframe path: frame picker + extract_keyframes_manual + one pick_image lane per timestamp", () => {
+    const lanes = 4;
+    const g = buildMarketingRemixManualKeyframesGraph(lanes);
+    expect(g.nodes.some((n) => n.id === "iv1")).toBe(false);
+    const vkp = g.nodes.find((n) => n.id === "vkp1");
+    expect(vkp?.type).toBe("video_keyframe_picker");
+    if (vkp?.type === "video_keyframe_picker") {
+      expect(vkp.data.frameTimesSec.length).toBe(lanes);
+      expect(vkp.data.videoUrl).toBe("");
+    }
+    const kf = g.nodes.find((n) => n.id === "mp_kf" && n.type === "media_process");
+    expect(kf?.type).toBe("media_process");
+    if (kf?.type === "media_process") {
+      expect(kf.data.operation).toBe("extract_keyframes_manual");
+      expect(kf.data.params).toEqual({});
+    }
+    expect(g.nodes.filter((n) => n.id.startsWith("pick_")).length).toBe(lanes);
+    expect(g.nodes.filter((n) => n.id.startsWith("vision_")).length).toBe(lanes);
+    expect(g.edges.some((e) => e.source === "vkp1" && e.target === "mp_kf")).toBe(true);
+    expect(g.edges.some((e) => e.source === "vkp1" && e.target === "mp_audio")).toBe(true);
+    expect(validateReplicateMarketingGraph(JSON.stringify(g))).toBe(true);
+  });
+
+  it("buildReplicateManualKeyframeWorkflowFromVideoUrl sets vkp1 URL", () => {
+    const url = "https://example.com/manual.mp4";
+    const g = buildReplicateManualKeyframeWorkflowFromVideoUrl(url);
+    const vkp = g.nodes.find((n) => n.id === "vkp1");
+    expect(vkp?.type).toBe("video_keyframe_picker");
+    if (vkp?.type === "video_keyframe_picker") {
+      expect(vkp.data.videoUrl).toBe(url);
+    }
   });
 
   it("rejects non-http URLs", () => {

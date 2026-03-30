@@ -76,9 +76,15 @@ export function getReplicateMarketingAdTemplate(): WorkflowGraph {
   return JSON.parse(JSON.stringify(LEGACY_TEMPLATE)) as WorkflowGraph;
 }
 
+type MarketingRemixKeyframeMode = "optical_flow" | "manual";
+
 /**
  * Optical-flow keyframes → per-lane OpenRouter vision → review gates (pause) → Nano Banana text-to-image
  * → per-lane `images_to_video` (static clip) → concat → mux.
+ *
+ * **Manual variant** (`buildMarketingRemixManualKeyframesGraph`): `video_keyframe_picker` + `extract_keyframes_manual`
+ * → same `pick_image` / vision / … lanes. Set `frameTimesSec` on the picker (length must match lane count) or in
+ * `mp_kf` params; users typically adjust times in the editor timeline.
  *
  * Optional Kling i2v: replace each `slide_*` `images_to_video` node with `fal-ai/kling-video/.../image-to-video`
  * and wire `nano_*` `out` → `start_image_url`, optionally inserting a motion-caption `openrouter/router/vision` node.
@@ -87,6 +93,21 @@ export function getReplicateMarketingAdTemplate(): WorkflowGraph {
  * `extract_keyframes` uses `keyframeMaxSegments: K` (capped at 24 in the runner).
  */
 export function buildMarketingRemixLanesGraph(lanes: number): WorkflowGraph {
+  return buildMarketingRemixLanesGraphImpl(lanes, "optical_flow");
+}
+
+/**
+ * Same lane layout as {@link buildMarketingRemixLanesGraph}, but video enters via `video_keyframe_picker` (`vkp1`)
+ * and `mp_kf` runs `extract_keyframes_manual` (seconds from the picker’s `frameTimesSec`, defaulting to K spaced stamps).
+ */
+export function buildMarketingRemixManualKeyframesGraph(lanes: number): WorkflowGraph {
+  return buildMarketingRemixLanesGraphImpl(lanes, "manual");
+}
+
+function buildMarketingRemixLanesGraphImpl(
+  lanes: number,
+  mode: MarketingRemixKeyframeMode,
+): WorkflowGraph {
   const K = Math.min(12, Math.max(1, Math.floor(lanes)));
   const nodes: WorkflowNode[] = [];
   const edges: WorkflowEdge[] = [];
@@ -105,12 +126,25 @@ export function buildMarketingRemixLanesGraph(lanes: number): WorkflowGraph {
     out: STAGE_X * 10 + 80,
   };
 
-  nodes.push({
-    id: "iv1",
-    type: "input_video",
-    data: { videoUrl: "" },
-    position: { x: x.inputs, y: Y0 + LANE_Y },
-  });
+  if (mode === "optical_flow") {
+    nodes.push({
+      id: "iv1",
+      type: "input_video",
+      data: { videoUrl: "" },
+      position: { x: x.inputs, y: Y0 + LANE_Y },
+    });
+  } else {
+    nodes.push({
+      id: "vkp1",
+      type: "video_keyframe_picker",
+      data: {
+        videoUrl: "",
+        /** One timestamp per lane; users replace via timeline in the editor. */
+        frameTimesSec: Array.from({ length: K }, (_, i) => i * 2),
+      },
+      position: { x: x.inputs, y: Y0 + LANE_Y },
+    });
+  }
   nodes.push({
     id: "in_prompt",
     type: "input_prompt",
@@ -120,10 +154,16 @@ export function buildMarketingRemixLanesGraph(lanes: number): WorkflowGraph {
   nodes.push({
     id: "mp_kf",
     type: "media_process",
-    data: {
-      operation: "extract_keyframes",
-      params: { sceneThreshold: 0.35, keyframeMaxSegments: K },
-    },
+    data:
+      mode === "optical_flow"
+        ? {
+            operation: "extract_keyframes",
+            params: { sceneThreshold: 0.35, keyframeMaxSegments: K },
+          }
+        : {
+            operation: "extract_keyframes_manual",
+            params: {},
+          },
     position: { x: x.mpIngest, y: Y0 + LANE_Y },
   });
   nodes.push({
@@ -157,16 +197,17 @@ export function buildMarketingRemixLanesGraph(lanes: number): WorkflowGraph {
     position: { x: x.out, y: Y0 + LANE_Y },
   });
 
+  const videoSourceId = mode === "optical_flow" ? "iv1" : "vkp1";
   edges.push({
-    id: "e_iv_kf",
-    source: "iv1",
+    id: mode === "optical_flow" ? "e_iv_kf" : "e_vkp_kf",
+    source: videoSourceId,
     target: "mp_kf",
     sourceHandle: "video",
     targetHandle: "video_url",
   });
   edges.push({
-    id: "e_iv_audio",
-    source: "iv1",
+    id: mode === "optical_flow" ? "e_iv_audio" : "e_vkp_audio",
+    source: videoSourceId,
     target: "mp_audio",
     sourceHandle: "video",
     targetHandle: "video_url",
@@ -320,7 +361,7 @@ export function buildMarketingRemixLanesGraph(lanes: number): WorkflowGraph {
   const raw = { nodes, edges };
   const parsed = safeParseWorkflowGraph(JSON.stringify(raw));
   if (!parsed.success) {
-    throw new Error("buildMarketingRemixLanesGraph: invalid graph");
+    throw new Error("buildMarketingRemixLanesGraphImpl: invalid graph");
   }
   assertAcyclic(parsed.data);
   return parsed.data;
@@ -355,6 +396,36 @@ export function buildReplicateWorkflowFromVideoUrl(
   return parsed.data;
 }
 
+/**
+ * Same as {@link buildReplicateWorkflowFromVideoUrl} but uses `video_keyframe_picker` (`vkp1`) and
+ * `extract_keyframes_manual`. Default `frameTimesSec` on the picker has six stamps; edit in the studio timeline as needed.
+ */
+export function buildReplicateManualKeyframeWorkflowFromVideoUrl(
+  videoUrl: string,
+  analysis?: MarketingVideoAnalysis,
+  mergeOpts?: MergeAnalysisOptions,
+): WorkflowGraph {
+  const trimmed = videoUrl.trim();
+  if (!/^https?:\/\//i.test(trimmed)) {
+    throw new Error("Video URL must start with http:// or https://");
+  }
+  const g = buildMarketingRemixManualKeyframesGraph(6);
+  const vkp = g.nodes.find((n) => n.id === "vkp1" && n.type === "video_keyframe_picker");
+  if (!vkp || vkp.type !== "video_keyframe_picker") {
+    throw new Error("Template missing video_keyframe_picker vkp1");
+  }
+  vkp.data.videoUrl = trimmed;
+  if (analysis) {
+    mergeAnalysisIntoGraph(g, analysis, mergeOpts);
+  }
+  assertAcyclic(g);
+  const parsed = safeParseWorkflowGraph(JSON.stringify(g));
+  if (!parsed.success) {
+    throw new Error("Generated graph invalid");
+  }
+  return parsed.data;
+}
+
 export function validateReplicateMarketingGraph(graphJson: string): boolean {
   const p = safeParseWorkflowGraph(graphJson);
   if (!p.success) return false;
@@ -363,5 +434,7 @@ export function validateReplicateMarketingGraph(graphJson: string): boolean {
   } catch {
     return false;
   }
-  return p.data.nodes.some((n) => n.type === "input_video");
+  return p.data.nodes.some(
+    (n) => n.type === "input_video" || n.type === "video_keyframe_picker",
+  );
 }
