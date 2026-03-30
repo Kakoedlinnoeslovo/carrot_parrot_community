@@ -77,6 +77,8 @@ model Workflow {
   /// "image" | "video" — aligns with community card when URL has no file extension
   coverPreviewKind  String?
   description       String?
+  /// JSON: denormalized fal model tags + optional graph preview for community feed (avoids parsing graphJson on list).
+  publishedFeedMetaJson String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -88,6 +90,8 @@ model Workflow {
   versions WorkflowVersion[]
   runs     Run[]
   likes    Like[]
+
+  @@index([visibility, updatedAt(sort: Desc)])
 }
 
 model WorkflowVersion {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
+import { buildPublishedFeedMetaJsonFromGraphJson } from "@/lib/published-feed-meta";
 import { assertAcyclic, safeParseWorkflowGraph } from "@/lib/workflow-graph";
 
 type RouteCtx = { params: Promise<{ id: string }> };
@@ -47,12 +48,21 @@ export async function PATCH(req: Request, ctx: RouteCtx) {
     assertAcyclic(parsed.data);
   }
 
+  const feedMetaPatch =
+    wf.visibility === "published" && body.graphJson !== undefined
+      ? (() => {
+          const meta = buildPublishedFeedMetaJsonFromGraphJson(body.graphJson);
+          return meta !== null ? { publishedFeedMetaJson: meta } : {};
+        })()
+      : {};
+
   const updated = await prisma.workflow.update({
     where: { id },
     data: {
       ...(body.title !== undefined ? { title: body.title } : {}),
       ...(body.description !== undefined ? { description: body.description } : {}),
       ...(body.graphJson !== undefined ? { graphJson: body.graphJson } : {}),
+      ...feedMetaPatch,
     },
   });
 

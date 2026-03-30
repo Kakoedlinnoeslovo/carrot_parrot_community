@@ -1,9 +1,7 @@
 import Link from "next/link";
 import { auth } from "@/auth";
 import { CommunityWorkflowCard } from "@/components/community-workflow-card";
-import { communityPreviewFromWorkflow } from "@/lib/community-preview";
-import { extractFalModelsUsed } from "@/lib/graph-models-used";
-import { safeParseWorkflowGraph } from "@/lib/workflow-graph";
+import { communityFeedCardFromWorkflowRow } from "@/lib/published-feed-meta";
 import { prisma } from "@/lib/db";
 import {
   listPublishedWorkflowsForFeed,
@@ -15,13 +13,15 @@ type PageProps = { searchParams: Promise<{ sort?: string }> };
 export default async function CommunityPage({ searchParams }: PageProps) {
   const sp = await searchParams;
   const sort: PublishedFeedSort = sp.sort === "trending" ? "trending" : "recent";
-  const session = await auth();
 
-  const workflows = await listPublishedWorkflowsForFeed({
-    sort,
-    take: 36,
-    requireSlug: true,
-  });
+  const [session, workflows] = await Promise.all([
+    auth(),
+    listPublishedWorkflowsForFeed({
+      sort,
+      take: 36,
+      requireSlug: true,
+    }),
+  ]);
 
   const likedIds = new Set<string>();
   if (session?.user?.id) {
@@ -75,28 +75,28 @@ export default async function CommunityPage({ searchParams }: PageProps) {
 
       <div className="mt-10 columns-2 gap-4 sm:columns-3 lg:columns-4">
         {withSlug.map((w, i) => {
-          const parsed = safeParseWorkflowGraph(w.graphJson);
-          const modelsUsed = parsed.success ? extractFalModelsUsed(parsed.data) : [];
+          const { preview, modelsUsed } = communityFeedCardFromWorkflowRow({
+            coverImageUrl: w.coverImageUrl,
+            coverPreviewKind: w.coverPreviewKind,
+            graphJson: w.graphJson,
+            publishedFeedMetaJson: w.publishedFeedMetaJson,
+          });
           return (
-          <CommunityWorkflowCard
-            key={w.id}
-            workflowId={w.id}
-            slug={w.slug}
-            title={w.title}
-            preview={communityPreviewFromWorkflow(
-              w.coverImageUrl,
-              w.graphJson,
-              w.coverPreviewKind,
-            )}
-            modelsUsed={modelsUsed}
-            authorName={w.user.name}
-            authorEmail={w.user.email}
-            authorImage={w.user.image}
-            likeCount={w._count.likes}
-            initialLiked={likedIds.has(w.id)}
-            isLoggedIn={!!session?.user}
-            index={i}
-          />
+            <CommunityWorkflowCard
+              key={w.id}
+              workflowId={w.id}
+              slug={w.slug}
+              title={w.title}
+              preview={preview}
+              modelsUsed={modelsUsed}
+              authorName={w.user.name}
+              authorEmail={w.user.email}
+              authorImage={w.user.image}
+              likeCount={w._count.likes}
+              initialLiked={likedIds.has(w.id)}
+              isLoggedIn={!!session?.user}
+              index={i}
+            />
           );
         })}
       </div>

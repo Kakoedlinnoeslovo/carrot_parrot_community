@@ -16,9 +16,10 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
+import { cache } from "react";
 import { prisma } from "@/lib/db";
 
-export const { handlers, signIn, signOut, auth } = NextAuth({
+const { handlers, signIn, signOut, auth: authUncached } = NextAuth({
   trustHost: true,
   session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
   pages: {
@@ -68,3 +69,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
   },
 });
+
+/** One session resolution per request when layout + page both call `auth()`. */
+export const auth = cache(authUncached);
+
+export { handlers, signIn, signOut };

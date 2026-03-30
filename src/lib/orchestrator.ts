@@ -23,6 +23,7 @@ import {
   type MediaItem,
   parseArtifactJson,
 } from "@/lib/artifact-json";
+import { buildPublishedFeedMetaJsonFromGraphJson } from "@/lib/published-feed-meta";
 import { pickWorkflowCoverFromRunSteps } from "@/lib/workflow-cover-from-run";
 import { runMediaProcessNode } from "@/lib/media-process-runner";
 
@@ -311,9 +312,16 @@ export async function resumePausedRun(
   if (options.graphJson) {
     const g = parseWorkflowGraph(options.graphJson);
     assertAcyclic(g);
+    const meta =
+      run.workflow.visibility === "published"
+        ? buildPublishedFeedMetaJsonFromGraphJson(options.graphJson)
+        : null;
     await prisma.workflow.update({
       where: { id: run.workflowId },
-      data: { graphJson: options.graphJson },
+      data: {
+        graphJson: options.graphJson,
+        ...(meta ? { publishedFeedMetaJson: meta } : {}),
+      },
     });
     graphJson = options.graphJson;
   }

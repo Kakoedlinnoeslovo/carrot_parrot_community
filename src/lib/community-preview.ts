@@ -1,4 +1,5 @@
 import { extractGraphMediaHints } from "@/lib/graph-media-hints";
+import type { WorkflowGraph } from "@/lib/workflow-graph";
 import { safeParseWorkflowGraph } from "@/lib/workflow-graph";
 
 export type CommunityPreview =
@@ -9,6 +10,28 @@ function guessKindFromUrl(url: string): "image" | "video" {
   const u = url.split("?")[0]?.toLowerCase() ?? "";
   if (/\.(mp4|webm|mov|m4v)(\?|$)/.test(u)) return "video";
   return "image";
+}
+
+/** Media preview from an already-validated graph (no cover). */
+export function communityPreviewFromParsedGraph(graph: WorkflowGraph): CommunityPreview {
+  const hints = extractGraphMediaHints(graph);
+  for (const h of hints) {
+    if (h.url.startsWith("data:")) continue;
+    if (h.kind === "video" || h.kind === "image") {
+      return {
+        type: "media",
+        url: h.url,
+        kind: h.kind === "video" ? "video" : "image",
+      };
+    }
+  }
+  for (const h of hints) {
+    if (h.url.startsWith("data:")) continue;
+    if (/^https?:\/\//i.test(h.url)) {
+      return { type: "media", url: h.url, kind: guessKindFromUrl(h.url) };
+    }
+  }
+  return { type: "placeholder" };
 }
 
 /** Thumbnail for community cards: cover URL, then graph media hints, else placeholder. */
@@ -30,22 +53,5 @@ export function communityPreviewFromWorkflow(
     return { type: "placeholder" };
   }
 
-  const hints = extractGraphMediaHints(parsed.data);
-  for (const h of hints) {
-    if (h.url.startsWith("data:")) continue;
-    if (h.kind === "video" || h.kind === "image") {
-      return {
-        type: "media",
-        url: h.url,
-        kind: h.kind === "video" ? "video" : "image",
-      };
-    }
-  }
-  for (const h of hints) {
-    if (h.url.startsWith("data:")) continue;
-    if (/^https?:\/\//i.test(h.url)) {
-      return { type: "media", url: h.url, kind: guessKindFromUrl(h.url) };
-    }
-  }
-  return { type: "placeholder" };
+  return communityPreviewFromParsedGraph(parsed.data);
 }

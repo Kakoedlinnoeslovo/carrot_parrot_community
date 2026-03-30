@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
-import { extractFalModelsUsed } from "@/lib/graph-models-used";
+import { communityFeedCardFromWorkflowRow } from "@/lib/published-feed-meta";
 import { listPublishedWorkflowsForFeed } from "@/lib/published-community-query";
-import { safeParseWorkflowGraph } from "@/lib/workflow-graph";
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -27,8 +26,12 @@ export async function GET(req: Request) {
 
   return NextResponse.json({
     items: sorted.map((w) => {
-      const parsed = safeParseWorkflowGraph(w.graphJson);
-      const modelsUsed = parsed.success ? extractFalModelsUsed(parsed.data) : [];
+      const { modelsUsed } = communityFeedCardFromWorkflowRow({
+        coverImageUrl: w.coverImageUrl,
+        coverPreviewKind: w.coverPreviewKind,
+        graphJson: w.graphJson,
+        publishedFeedMetaJson: w.publishedFeedMetaJson,
+      });
       return {
         id: w.id,
         title: w.title,

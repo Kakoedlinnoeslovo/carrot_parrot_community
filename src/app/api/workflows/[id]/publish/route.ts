@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { nanoid } from "nanoid";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
+import { buildPublishedFeedMetaJsonFromGraph } from "@/lib/published-feed-meta";
 import { safeParseWorkflowGraph } from "@/lib/workflow-graph";
 
 type RouteCtx = { params: Promise<{ id: string }> };
@@ -53,6 +54,7 @@ export async function POST(_req: Request, ctx: RouteCtx) {
       data: {
         visibility: "published",
         slug,
+        publishedFeedMetaJson: buildPublishedFeedMetaJsonFromGraph(parsed.data),
       },
     }),
   ]);
