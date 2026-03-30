@@ -222,12 +222,88 @@ export async function muxVideoAndAudio(videoPath: string, audioPath: string, out
   }
 }
 
-export async function concatVideosFromList(listFile: string, outPath: string): Promise<void> {
-  const r = await runCmd(
-    getFfmpegPath(),
-    ["-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", outPath],
-    { timeoutMs: 600_000 },
+/** Max width for concat normalization; height preserves aspect (`-2`). */
+export const CONCAT_NORMALIZE_MAX_WIDTH = 1280;
+/** CFR applied to every segment before concat so mixed FPS / VFR clips concatenate reliably. */
+export const CONCAT_NORMALIZE_FPS = 24;
+
+/**
+ * Video filter applied per segment before `concat` (scale cap + CFR).
+ * Comma in `min(W,iw)` must be escaped for FFmpeg filter syntax.
+ */
+export const CONCAT_NORMALIZE_VF = `scale=w=min(${CONCAT_NORMALIZE_MAX_WIDTH}\\,iw):h=-2,fps=${CONCAT_NORMALIZE_FPS}`;
+
+/**
+ * Build `-filter_complex` graph for N ≥ 2 inputs: normalize each video stream, then concat (video-only).
+ * @internal Exported for tests.
+ */
+export function buildConcatFilterGraph(inputCount: number): string {
+  if (inputCount < 2) {
+    throw new Error("buildConcatFilterGraph: inputCount must be >= 2");
+  }
+  const parts: string[] = [];
+  for (let i = 0; i < inputCount; i++) {
+    parts.push(`[${i}:v]${CONCAT_NORMALIZE_VF}[v${i}]`);
+  }
+  const concatInputs = Array.from({ length: inputCount }, (_, i) => `[v${i}]`).join("");
+  return `${parts.join(";")};${concatInputs}concat=n=${inputCount}:v=1:a=0[outv]`;
+}
+
+/**
+ * Concatenate multiple video files with **re-encode** (not stream copy). Decodes each segment,
+ * normalizes resolution (max width) and frame rate, strips audio, then encodes H.264 + yuv420p.
+ * Use this when inputs may differ in codec params, FPS, resolution, or audio presence (e.g. fal I2V + `images_to_video`).
+ */
+export async function concatVideosNormalized(filePaths: string[], outPath: string): Promise<void> {
+  const n = filePaths.length;
+  if (n < 1) {
+    throw new Error("concatVideosNormalized: need at least one file");
+  }
+  if (n === 1) {
+    const r = await runCmd(
+      getFfmpegPath(),
+      [
+        "-y",
+        "-i",
+        filePaths[0]!,
+        "-vf",
+        CONCAT_NORMALIZE_VF,
+        "-an",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        outPath,
+      ],
+      { timeoutMs: 600_000 },
+    );
+    if (r.code !== 0) {
+      throw new Error(`concat failed: ${r.stderr.slice(-800)}`);
+    }
+    return;
+  }
+
+  const args: string[] = ["-y"];
+  for (const p of filePaths) {
+    args.push("-i", p);
+  }
+  args.push(
+    "-filter_complex",
+    buildConcatFilterGraph(n),
+    "-map",
+    "[outv]",
+    "-an",
+    "-c:v",
+    "libx264",
+    "-pix_fmt",
+    "yuv420p",
+    "-movflags",
+    "+faststart",
+    outPath,
   );
+  const r = await runCmd(getFfmpegPath(), args, { timeoutMs: 600_000 });
   if (r.code !== 0) {
     throw new Error(`concat failed: ${r.stderr.slice(-800)}`);
   }
@@ -235,11 +311,6 @@ export async function concatVideosFromList(listFile: string, outPath: string): P
 
 export async function readFileBuffer(p: string): Promise<Buffer> {
   return readFile(p);
-}
-
-export async function writeConcatListFile(filePaths: string[], outList: string): Promise<void> {
-  const lines = filePaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`);
-  await writeFile(outList, lines.join("\n"), "utf8");
 }
 
 /**

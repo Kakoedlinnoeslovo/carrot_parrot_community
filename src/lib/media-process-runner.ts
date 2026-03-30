@@ -3,7 +3,7 @@ import type { MergeArtifact } from "@/lib/fal-merge-input";
 import type { FalClient } from "@/lib/fal-client";
 import {
   assertFfmpegAvailable,
-  concatVideosFromList,
+  concatVideosNormalized,
   downloadImageToTempFile,
   downloadVideoToTempFile,
   extractAudioMp3,
@@ -14,7 +14,6 @@ import {
   muxVideoAndAudio,
   normalizeImagesToPngSequence,
   readFileBuffer,
-  writeConcatListFile,
 } from "@/lib/media/ffmpeg";
 import { segmentScenesWithOpticalFlow } from "@/lib/media/segment-video";
 import type { WorkflowGraph, WorkflowNode } from "@/lib/workflow-graph";
@@ -366,10 +365,8 @@ export async function runMediaProcessNode(
           localPaths.push(dl.filePath);
           cleanups.push(dl.cleanup);
         }
-        const listFile = path.join(workDir, "list.txt");
-        await writeConcatListFile(localPaths, listFile);
         const out = path.join(workDir, "concat-out.mp4");
-        await concatVideosFromList(listFile, out);
+        await concatVideosNormalized(localPaths, out);
         const buf = await readFileBuffer(out);
         const uploaded = await uploadBlob(fal, buf, "video/mp4");
         return { images: [], media: [{ url: uploaded, kind: "video" }], text: undefined };
