@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MarketingVideoAnalysis } from "@/lib/marketing-video-analyzer";
 import {
+  buildMarketingRemixLanesGraph,
   buildReplicateWorkflowFromVideoUrl,
   getReplicateMarketingAdTemplate,
   validateReplicateMarketingGraph,
@@ -20,6 +21,26 @@ describe("replicate-marketing-template", () => {
 
   it("rejects non-http URLs", () => {
     expect(() => buildReplicateWorkflowFromVideoUrl("not-a-url")).toThrow();
+  });
+
+  it("remix graph uses openrouter image_urls, nano t2i, and slide images_to_video (no default kling)", () => {
+    const g = buildMarketingRemixLanesGraph(2);
+    const vis = g.nodes.find((n) => n.id === "vision_0");
+    expect(vis?.type).toBe("fal_model");
+    if (vis?.type === "fal_model") {
+      expect(vis.data.primaryImageInputKey).toBe("image_urls");
+      expect(vis.data.openapiInputKeys).toContain("image_urls");
+    }
+    const pickToVis = g.edges.find((e) => e.source === "pick_0" && e.target === "vision_0");
+    expect(pickToVis?.targetHandle).toBe("image_urls");
+    const nano = g.nodes.find((n) => n.id === "nano_0");
+    expect(nano?.type).toBe("fal_model");
+    if (nano?.type === "fal_model") {
+      expect(nano.data.falModelId).toBe("fal-ai/nano-banana-2");
+    }
+    expect(g.nodes.some((n) => n.id === "slide_0")).toBe(true);
+    expect(g.nodes.some((n) => n.id.startsWith("kling_"))).toBe(false);
+    expect(g.edges.some((e) => e.source === "pick_0" && e.target === "nano_0")).toBe(false);
   });
 
   it("merges optional analysis into prompt and fal nodes", () => {

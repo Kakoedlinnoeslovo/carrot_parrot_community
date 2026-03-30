@@ -11,6 +11,13 @@ import {
 
 const OPENROUTER_VISION = "openrouter/router/vision";
 const GEMINI_FLASH = "google/gemini-2.0-flash-001";
+const NANO_T2I = "fal-ai/nano-banana-2";
+
+/** Horizontal spacing between pipeline stages (px). */
+const STAGE_X = 420;
+/** Vertical spacing between parallel lanes (px). */
+const LANE_Y = 320;
+const Y0 = 100;
 
 function mergeAnalysisIntoGraph(g: WorkflowGraph, analysis: MarketingVideoAnalysis): void {
   const timeline = analysis.segments.map((s) => `${s.start.toFixed(1)}–${s.end.toFixed(1)}s`).join("; ");
@@ -56,7 +63,12 @@ export function getReplicateMarketingAdTemplate(): WorkflowGraph {
 }
 
 /**
- * Optical-flow keyframes → per-lane OpenRouter vision → review gates (pause) → Nano Banana → motion caption → Kling → concat → mux.
+ * Optical-flow keyframes → per-lane OpenRouter vision → review gates (pause) → Nano Banana text-to-image
+ * → per-lane `images_to_video` (static clip) → concat → mux.
+ *
+ * Optional Kling i2v: replace each `slide_*` `images_to_video` node with `fal-ai/kling-video/.../image-to-video`
+ * and wire `nano_*` `out` → `start_image_url`, optionally inserting a motion-caption `openrouter/router/vision` node.
+ *
  * @param lanes Number of parallel lanes (1–4). Each lane uses one keyframe index = lane index.
  */
 export function buildMarketingRemixLanesGraph(lanes: number): WorkflowGraph {
@@ -64,17 +76,31 @@ export function buildMarketingRemixLanesGraph(lanes: number): WorkflowGraph {
   const nodes: WorkflowNode[] = [];
   const edges: WorkflowEdge[] = [];
 
+  const x = {
+    inputs: 0,
+    mpIngest: STAGE_X,
+    mpSync: STAGE_X * 2 + 40,
+    pick: STAGE_X * 3,
+    vision: STAGE_X * 4,
+    gate: STAGE_X * 5,
+    nano: STAGE_X * 6,
+    slide: STAGE_X * 7,
+    concat: STAGE_X * 8 + 80,
+    mux: STAGE_X * 9 + 80,
+    out: STAGE_X * 10 + 80,
+  };
+
   nodes.push({
     id: "iv1",
     type: "input_video",
     data: { videoUrl: "" },
-    position: { x: 0, y: 200 },
+    position: { x: x.inputs, y: Y0 + LANE_Y },
   });
   nodes.push({
     id: "in_prompt",
     type: "input_prompt",
     data: { prompt: "Cinematic product ad, vertical 9:16, bold text overlays, brand-safe." },
-    position: { x: 0, y: 0 },
+    position: { x: x.inputs, y: 0 },
   });
   nodes.push({
     id: "mp_kf",
@@ -83,37 +109,37 @@ export function buildMarketingRemixLanesGraph(lanes: number): WorkflowGraph {
       operation: "extract_keyframes",
       params: { sceneThreshold: 0.35, keyframeMaxSegments: K },
     },
-    position: { x: 220, y: 200 },
+    position: { x: x.mpIngest, y: Y0 + LANE_Y },
   });
   nodes.push({
     id: "mp_audio",
     type: "media_process",
     data: { operation: "extract_audio", params: {} },
-    position: { x: 220, y: 60 },
+    position: { x: x.mpIngest, y: 0 },
   });
   nodes.push({
     id: "mp_sync",
     type: "media_process",
     data: { operation: "sync_barrier", params: {} },
-    position: { x: 520, y: 40 },
+    position: { x: x.mpSync, y: 20 },
   });
   nodes.push({
     id: "mp_concat",
     type: "media_process",
     data: { operation: "concat_videos", params: {} },
-    position: { x: 1480, y: 200 },
+    position: { x: x.concat, y: Y0 + LANE_Y },
   });
   nodes.push({
     id: "mp_mux",
     type: "media_process",
     data: { operation: "mux_audio_video", params: {} },
-    position: { x: 1720, y: 200 },
+    position: { x: x.mux, y: Y0 + LANE_Y },
   });
   nodes.push({
     id: "out1",
     type: "output_preview",
     data: { title: "Final ad" },
-    position: { x: 1960, y: 200 },
+    position: { x: x.out, y: Y0 + LANE_Y },
   });
 
   edges.push({
@@ -132,19 +158,18 @@ export function buildMarketingRemixLanesGraph(lanes: number): WorkflowGraph {
   });
 
   for (let i = 0; i < K; i++) {
-    const y = 120 + i * 220;
+    const y = Y0 + i * LANE_Y;
     const pickId = `pick_${i}`;
     const visionId = `vision_${i}`;
     const gateId = `gate_${i}`;
-    const motionId = `motion_${i}`;
     const nanoId = `nano_${i}`;
-    const klingId = `kling_${i}`;
+    const slideId = `slide_${i}`;
 
     nodes.push({
       id: pickId,
       type: "media_process",
       data: { operation: "pick_image", params: { index: i } },
-      position: { x: 480, y },
+      position: { x: x.pick, y },
     });
     nodes.push({
       id: visionId,
@@ -156,53 +181,38 @@ export function buildMarketingRemixLanesGraph(lanes: number): WorkflowGraph {
           prompt:
             "Describe this advertising frame briefly: subjects, on-screen text, mood, palette, and product focus.",
         },
-        openapiInputKeys: ["image_url", "prompt", "model"],
-        primaryImageInputKey: "image_url",
+        openapiInputKeys: ["image_urls", "prompt", "model"],
+        primaryImageInputKey: "image_urls",
       },
-      position: { x: 720, y },
+      position: { x: x.vision, y },
     });
     nodes.push({
       id: gateId,
       type: "review_gate",
       data: { text: "" },
-      position: { x: 960, y },
+      position: { x: x.gate, y },
     });
     nodes.push({
       id: nanoId,
       type: "fal_model",
       data: {
-        falModelId: "fal-ai/nano-banana-2/edit",
-        falInput: { prompt: "Polished marketing frame, vertical 9:16, keep composition." },
-        openapiInputKeys: ["prompt", "image_urls"],
-        primaryImageInputKey: "image_urls",
-      },
-      position: { x: 1180, y },
-    });
-    nodes.push({
-      id: motionId,
-      type: "fal_model",
-      data: {
-        falModelId: OPENROUTER_VISION,
+        falModelId: NANO_T2I,
         falInput: {
-          model: GEMINI_FLASH,
-          prompt:
-            "Given the edited frame and the creative brief, output ONE short phrase of subtle camera motion for image-to-video (e.g. slow push-in, gentle pan right).",
+          prompt: "Polished marketing frame, vertical 9:16, on-brand.",
+          aspect_ratio: "9:16",
         },
-        openapiInputKeys: ["image_url", "prompt", "model"],
-        primaryImageInputKey: "image_url",
+        openapiInputKeys: ["prompt", "aspect_ratio"],
       },
-      position: { x: 1180, y: y + 70 },
+      position: { x: x.nano, y },
     });
     nodes.push({
-      id: klingId,
-      type: "fal_model",
+      id: slideId,
+      type: "media_process",
       data: {
-        falModelId: "fal-ai/kling-video/v1/pro/image-to-video",
-        falInput: { prompt: "Subtle camera motion, vertical ad." },
-        openapiInputKeys: ["prompt", "start_image_url"],
-        primaryImageInputKey: "start_image_url",
+        operation: "images_to_video",
+        params: { secondsPerFrame: 2.5, maxFrames: 1, maxWidth: 1080 },
       },
-      position: { x: 1400, y },
+      position: { x: x.slide, y },
     });
 
     edges.push({
@@ -217,7 +227,7 @@ export function buildMarketingRemixLanesGraph(lanes: number): WorkflowGraph {
       source: pickId,
       target: visionId,
       sourceHandle: "out",
-      targetHandle: "image_url",
+      targetHandle: "image_urls",
     });
     edges.push({
       id: `e_vis_sync_${i}`,
@@ -248,13 +258,6 @@ export function buildMarketingRemixLanesGraph(lanes: number): WorkflowGraph {
       targetHandle: "prompt",
     });
     edges.push({
-      id: `e_pick_nano_${i}`,
-      source: pickId,
-      target: nanoId,
-      sourceHandle: "out",
-      targetHandle: "image_urls",
-    });
-    edges.push({
       id: `e_prompt_nano_${i}`,
       source: "in_prompt",
       target: nanoId,
@@ -262,43 +265,15 @@ export function buildMarketingRemixLanesGraph(lanes: number): WorkflowGraph {
       targetHandle: "prompt",
     });
     edges.push({
-      id: `e_nano_motion_${i}`,
+      id: `e_nano_slide_${i}`,
       source: nanoId,
-      target: motionId,
+      target: slideId,
       sourceHandle: "out",
-      targetHandle: "image_url",
+      targetHandle: "image_urls",
     });
     edges.push({
-      id: `e_gate_motion_${i}`,
-      source: gateId,
-      target: motionId,
-      sourceHandle: "out",
-      targetHandle: "prompt",
-    });
-    edges.push({
-      id: `e_motion_kling_${i}`,
-      source: motionId,
-      target: klingId,
-      sourceHandle: "out",
-      targetHandle: "prompt",
-    });
-    edges.push({
-      id: `e_nano_kling_${i}`,
-      source: nanoId,
-      target: klingId,
-      sourceHandle: "out",
-      targetHandle: "start_image_url",
-    });
-    edges.push({
-      id: `e_prompt_kling_${i}`,
-      source: "in_prompt",
-      target: klingId,
-      sourceHandle: "prompt",
-      targetHandle: "prompt",
-    });
-    edges.push({
-      id: `e_kling_concat_${i}`,
-      source: klingId,
+      id: `e_slide_concat_${i}`,
+      source: slideId,
       target: "mp_concat",
       sourceHandle: "out",
       targetHandle: `video_${i}`,

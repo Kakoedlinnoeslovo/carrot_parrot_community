@@ -233,6 +233,44 @@ describe("mergeFalInput", () => {
     expect(out.audio_url).toBe("https://v3.fal.media/files/rabbit/tts_output.mp3");
   });
 
+  it("pick_image artifact → openrouter/router/vision explicit image_urls is a one-element array", () => {
+    const g: WorkflowGraph = {
+      nodes: [
+        {
+          id: "pick",
+          type: "media_process",
+          data: { operation: "pick_image", params: { index: 0 } },
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "vis",
+          type: "fal_model",
+          data: {
+            falModelId: "openrouter/router/vision",
+            falInput: { model: "google/gemini-2.0-flash-001", prompt: "Describe" },
+          },
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [
+        {
+          id: "e1",
+          source: "pick",
+          target: "vis",
+          sourceHandle: "out",
+          targetHandle: "image_urls",
+        },
+      ],
+    };
+    const out = mergeFalInput(g.nodes[1] as Extract<(typeof g.nodes)[1], { type: "fal_model" }>, g, {
+      pick: {
+        images: ["https://cdn.example.com/frame.png"],
+        media: [{ url: "https://cdn.example.com/frame.png", kind: "image" }],
+      },
+    });
+    expect(out.image_urls).toEqual(["https://cdn.example.com/frame.png"]);
+  });
+
   it("two input_image edges → image_urls accumulates both URLs in edge order", () => {
     const g: WorkflowGraph = {
       nodes: [

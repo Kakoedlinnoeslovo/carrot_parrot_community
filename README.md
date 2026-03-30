@@ -24,7 +24,9 @@ Connect an **IMAGE** node and **TEXT** node to a **FAL** node; map each wire to 
 
 ### VLM / LLM text into the next model’s `prompt`
 
-Models such as [`openrouter/router/vision`](https://fal.ai/models/openrouter/router/vision) return a JSON object with an `output` string (caption), not image URLs. In this studio, each fal node exposes a single **`out`** port typed as **text + media URLs**: connect **`out`** to the next node’s **`prompt`** (or **`image_url`**, **`start_image_url`**, etc.) by attaching to that input’s handle. The runner stores captions in artifacts so **`prompt`** wires get plain text. On fal’s hosted Workflow editor, map the vision model’s string output into **`prompt`** the same way—do not pass the whole JSON object into a string field.
+Models such as [`openrouter/router/vision`](https://fal.ai/models/openrouter/router/vision) require **`image_urls`** (array of URLs) for frame input—wire **`pick_image`** / **`extract_frames`** **`out`** to the vision node’s **`image_urls`** handle (not `image_url`). The API returns a JSON object with an `output` string (caption), not image URLs. In this studio, each fal node exposes a single **`out`** port typed as **text + media URLs**: connect **`out`** to the next node’s **`prompt`** (or **`start_image_url`**, etc.) by attaching to that input’s handle. The runner stores captions in artifacts so **`prompt`** wires get plain text.
+
+**Marketing remix** (programmatic graph from `buildMarketingRemixLanesGraph` / remix from video): optical-flow **`extract_keyframes`** → **`pick_image`** per lane → OpenRouter vision → **`review_gate`** (pause) → **`fal-ai/nano-banana-2`** text-to-image → per-lane **`images_to_video`** (short static clip) → **`concat_videos`** → **`mux_audio_video`**. For motion, replace a lane’s **`images_to_video`** node with **`fal-ai/kling-video/.../image-to-video`**, wire **`nano_*` `out`** → **`start_image_url`**, and optionally add a motion-caption step before Kling.
 
 ### Frames → video
 
