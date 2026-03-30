@@ -1,3 +1,20 @@
+/**
+ * App Router **Route Handler** — `route.ts` maps HTTP methods to exported functions (`GET`,
+ * `POST`, …). This file handles `POST /api/runs`.
+ *
+ * Python analogy: similar to a single FastAPI `@router.post("/api/runs")` or Flask blueprint
+ * route, but this file *is* the handler module (file-based routing: URL path mirrors
+ * folders under `src/app/api/`).
+ *
+ * - **`await auth()`** — server-only; reads the session (no `request` argument needed in App
+ *   Router auth helpers; compare to passing `Authorization` header manually in Starlette).
+ * - **`after(() => …)`** — Next.js 15+ helper to run work *after* the HTTP response is sent
+ *   (fire-and-forget background continuation). Rough analogy: returning HTTP 202 and
+ *   scheduling a Celery task, but inlined in the same process with caveats (still tied to
+ *   serverless lifetime).
+ *
+ * @see https://nextjs.org/docs/app/building-your-application/routing/route-handlers
+ */
 import { NextResponse } from "next/server";
 import { after } from "next/server";
 import { auth } from "@/auth";
@@ -8,6 +25,7 @@ import { graphNeedsFalKey, hasEffectiveFalApiKey } from "@/lib/fal-effective-key
 import { assertAcyclic, safeParseWorkflowGraph } from "@/lib/workflow-graph";
 import { z } from "zod";
 
+/** JSON body validator — Zod is like Pydantic: `.safeParse` returns ok/err without throwing. */
 const postSchema = z.object({
   workflowId: z.string().min(1),
   /** When true, every fal_model step calls fal (no copy from a prior run). */
@@ -16,6 +34,11 @@ const postSchema = z.object({
   reuseFromRunId: z.string().min(1).optional(),
 });
 
+/**
+ * Start a workflow run: validate user + graph, create `Run` + `RunStep` rows in one
+ * transaction, then schedule `processRun` **after** responding so the client gets `runId`
+ * quickly while work continues server-side.
+ */
 export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user?.id || !session.user.email) {
@@ -84,6 +107,7 @@ export async function POST(req: Request) {
     reuseReferenceRunId = ref.id;
   }
 
+  // `tx` = transactional client — all operations commit or roll back together (ACID), like SQLAlchemy `session.begin()`.
   const run = await prisma.$transaction(async (tx) => {
     const r = await tx.run.create({
       data: {
@@ -104,6 +128,7 @@ export async function POST(req: Request) {
     return r;
   });
 
+  // Deferred execution: response returns first; failures here update the run row to `failed`.
   after(async () => {
     try {
       await processRun(run.id);

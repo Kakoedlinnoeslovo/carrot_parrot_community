@@ -3,7 +3,7 @@ import {
   computePrimaryImageInputKey,
   inferPrimaryImageInputKeyFromKeyList,
   isOutputPrimarilyTextual,
-} from "./fal-openapi-wiring";
+} from "@/lib/fal-openapi-wiring";
 
 describe("computePrimaryImageInputKey", () => {
   it("prefers image_url when audio_url is present (avatar / lip-sync)", () => {

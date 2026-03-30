@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractQueueInputSchema, resolveJsonPointer } from "./fal-openapi-input";
+import { extractQueueInputSchema, resolveJsonPointer } from "@/lib/fal-openapi-input";
 
 const fluxSchnellFixture = {
   openapi: "3.0.4",

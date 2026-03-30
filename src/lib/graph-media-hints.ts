@@ -92,6 +92,9 @@ export function extractGraphMediaHints(graph: WorkflowGraph): GraphMediaHint[] {
     if (n.type === "input_prompt") {
       /* text only — skip */
     }
+    if (n.type === "review_gate") {
+      /* runtime caption — no static media hints */
+    }
     if (n.type === "fal_model") {
       collectFromFalInputObject(n.data.falInput, out, seen, 0, "");
     }

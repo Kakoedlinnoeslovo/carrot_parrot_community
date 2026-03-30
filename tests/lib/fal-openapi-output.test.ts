@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractQueueOutputSchema } from "./fal-openapi-output";
+import { extractQueueOutputSchema } from "@/lib/fal-openapi-output";
 
 const fixtureWithOutput = {
   openapi: "3.0.4",

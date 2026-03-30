@@ -3,7 +3,7 @@ import {
   canReuseFalStepFromPrevious,
   deepEqual,
   falInputsJsonMatchesPrevious,
-} from "./fal-step-reuse";
+} from "@/lib/fal-step-reuse";
 
 describe("deepEqual", () => {
   it("compares primitives and null", () => {

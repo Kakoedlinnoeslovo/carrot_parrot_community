@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractTextFromFalData } from "./orchestrator";
+import { extractTextFromFalData } from "@/lib/orchestrator";
 
 describe("extractTextFromFalData", () => {
   it("reads openrouter/router/vision style { output, usage }", () => {

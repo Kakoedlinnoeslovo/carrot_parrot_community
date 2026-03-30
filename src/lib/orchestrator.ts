@@ -1,5 +1,5 @@
 import type { WorkflowGraph } from "@/lib/workflow-graph";
-import { parseWorkflowGraph } from "@/lib/workflow-graph";
+import { assertAcyclic, parseWorkflowGraph } from "@/lib/workflow-graph";
 import { prisma } from "@/lib/db";
 import { getAppUrl } from "@/lib/env";
 import {
@@ -80,11 +80,13 @@ export function extractMediaFromFalData(data: unknown): MediaItem[] {
   return out;
 }
 
+function imageUrlsFromMediaItems(media: MediaItem[]): string[] {
+  return media.filter((m) => m.kind === "image" || m.kind === "unknown").map((m) => m.url);
+}
+
 /** Legacy helper: image file URLs only. */
 export function extractImageUrlsFromFalData(data: unknown): string[] {
-  return extractMediaFromFalData(data)
-    .filter((m) => m.kind === "image" || m.kind === "unknown")
-    .map((m) => m.url);
+  return imageUrlsFromMediaItems(extractMediaFromFalData(data));
 }
 
 function isNonUrlString(s: string): boolean {
@@ -202,7 +204,7 @@ async function runHostedWorkflowStep(
   }
 
   const media = extractMediaFromFalData(result.finalOutput);
-  const images = media.filter((m) => m.kind === "image" || m.kind === "unknown").map((m) => m.url);
+  const images = imageUrlsFromMediaItems(media);
 
   if (media.length === 0) {
     const err = "Workflow finished but no media URLs were found in the output.";
@@ -241,13 +243,104 @@ async function continueRunAfterFalOutput(runId: string) {
     include: { workflow: true },
   });
   if (!run) return;
+  if (run.status === "paused") return;
+
   const graph = parseWorkflowGraph(run.workflow.graphJson);
   const key = await resolveEffectiveFalApiKey(run.userId);
   const fal = key ? createFalClientFromApiKey(key) : null;
   await scheduleReadyMediaProcessSteps(runId, graph, fal);
+  if (await tryPauseForReviewGates(runId, graph)) return;
   await scheduleReadyFalSteps(runId, graph, fal);
+  if (await tryPauseForReviewGates(runId, graph)) return;
   await schedulePassthroughSteps(runId, graph);
   await finalizeRunIfDone(runId);
+}
+
+/**
+ * When all predecessors of every `review_gate` have succeeded, pause the run and block gate steps
+ * until `resumePausedRun` completes them with user-edited text.
+ */
+export async function tryPauseForReviewGates(runId: string, graph: WorkflowGraph): Promise<boolean> {
+  const run = await prisma.run.findFirst({ where: { id: runId }, select: { status: true } });
+  if (!run) return false;
+  if (run.status === "paused") return true;
+
+  const steps = await prisma.runStep.findMany({ where: { runId } });
+  const byNode = Object.fromEntries(steps.map((s) => [s.nodeId, s]));
+  if (steps.some((s) => s.status === "failed")) return false;
+
+  const gates = graph.nodes.filter((n) => n.type === "review_gate");
+  const ready = gates.filter((g) => {
+    const st = byNode[g.id];
+    if (!st || st.status !== "pending") return false;
+    const preds = predecessors(graph, g.id);
+    return preds.length > 0 && preds.every((pid) => byNode[pid]?.status === "succeeded");
+  });
+  if (ready.length === 0) return false;
+
+  await prisma.run.update({
+    where: { id: runId },
+    data: { status: "paused" },
+  });
+  for (const g of ready) {
+    await prisma.runStep.updateMany({
+      where: { runId, nodeId: g.id, status: "pending" },
+      data: { status: "blocked" },
+    });
+  }
+  return true;
+}
+
+/**
+ * Unblock `review_gate` steps after the user edits captions; continues fal/media scheduling.
+ */
+export async function resumePausedRun(
+  runId: string,
+  userId: string,
+  options: { gateTexts?: Record<string, string>; graphJson?: string },
+): Promise<void> {
+  const run = await prisma.run.findFirst({
+    where: { id: runId, userId, status: "paused" },
+    include: { workflow: true },
+  });
+  if (!run) {
+    throw new Error("Run not found, not owned by user, or not paused");
+  }
+
+  let graphJson = run.workflow.graphJson;
+  if (options.graphJson) {
+    const g = parseWorkflowGraph(options.graphJson);
+    assertAcyclic(g);
+    await prisma.workflow.update({
+      where: { id: run.workflowId },
+      data: { graphJson: options.graphJson },
+    });
+    graphJson = options.graphJson;
+  }
+  const graph = parseWorkflowGraph(graphJson);
+  const gateTexts = options.gateTexts ?? {};
+
+  for (const node of graph.nodes) {
+    if (node.type !== "review_gate") continue;
+    const text = (gateTexts[node.id] ?? node.data.text ?? "").trim();
+    await prisma.runStep.updateMany({
+      where: { runId, nodeId: node.id, status: "blocked" },
+      data: {
+        status: "succeeded",
+        outputsJson: JSON.stringify({
+          text: text || undefined,
+          images: [],
+        } satisfies Artifact),
+      },
+    });
+  }
+
+  await prisma.run.update({
+    where: { id: runId },
+    data: { status: "running" },
+  });
+
+  await continueRunAfterFalOutput(runId);
 }
 
 /** Resolves `output_preview` nodes by copying upstream artifacts (no fal call). */
@@ -315,7 +408,7 @@ async function pollFalUntilComplete(
       await fal.queue.subscribeToStatus(endpointId, { requestId });
       const res = await fal.queue.result(endpointId, { requestId });
       const media = extractMediaFromFalData(res.data);
-      const images = media.filter((m) => m.kind === "image" || m.kind === "unknown").map((m) => m.url);
+      const images = imageUrlsFromMediaItems(media);
       const text = extractTextFromFalData(res.data);
 
       const step = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
@@ -368,8 +461,8 @@ function predecessors(graph: WorkflowGraph, nodeId: string): string[] {
 
 /**
  * Steps from a prior succeeded run (same workflow), keyed by nodeId, for reuse when inputs match.
+ * Exported for tests: prior-run steps used to skip unchanged fal_model nodes.
  */
-/** Exported for tests: prior-run steps used to skip unchanged fal_model nodes. */
 export async function loadReuseReferenceStepsByNodeId(
   runId: string,
 ): Promise<Record<string, PrismaRunStep> | null> {
@@ -414,7 +507,7 @@ export async function processRun(runId: string) {
     include: { workflow: true, steps: true },
   });
   if (!run) return;
-  if (run.status === "succeeded" || run.status === "failed") return;
+  if (run.status === "succeeded" || run.status === "failed" || run.status === "paused") return;
 
   const graph = parseWorkflowGraph(run.workflow.graphJson);
   const needsFal = graph.nodes.some((n) => n.type === "fal_model" || n.type === "media_process");
@@ -512,7 +605,9 @@ export async function processRun(runId: string) {
   }
 
   await scheduleReadyMediaProcessSteps(runId, graph, fal);
+  if (await tryPauseForReviewGates(runId, graph)) return;
   await scheduleReadyFalSteps(runId, graph, fal);
+  if (await tryPauseForReviewGates(runId, graph)) return;
   await schedulePassthroughSteps(runId, graph);
   await finalizeRunIfDone(runId);
 }
@@ -523,6 +618,9 @@ export async function scheduleReadyMediaProcessSteps(
   graph: WorkflowGraph,
   fal: FalClient | null,
 ) {
+  const runRow = await prisma.run.findFirst({ where: { id: runId }, select: { status: true } });
+  if (runRow?.status === "paused") return;
+
   const needs = graph.nodes.some((n) => n.type === "media_process");
   if (!needs) return;
   if (!fal) {
@@ -596,6 +694,9 @@ export async function scheduleReadyFalSteps(
   graph: WorkflowGraph,
   fal: FalClient | null,
 ) {
+  const runRow = await prisma.run.findFirst({ where: { id: runId }, select: { status: true } });
+  if (runRow?.status === "paused") return;
+
   const needsFal = graph.nodes.some((n) => n.type === "fal_model");
   if (needsFal && !fal) {
     await failRun(
@@ -625,17 +726,7 @@ export async function scheduleReadyFalSteps(
         if (!predOk) continue;
 
         if (!isFalEndpointIdAllowed(node.data.falModelId)) {
-          await prisma.runStep.update({
-            where: { id: step.id },
-            data: {
-              status: "failed",
-              error: "Model is not allowed by server policy (FAL_MODEL_ALLOWLIST / FAL_MODEL_DENYLIST).",
-            },
-          });
-          await prisma.run.update({
-            where: { id: runId },
-            data: { status: "failed", finishedAt: new Date(), error: "Blocked model endpoint" },
-          });
+          await failRunStepBlockedModel(runId, step.id);
           return;
         }
 
@@ -697,17 +788,7 @@ export async function scheduleReadyFalSteps(
     if (!predOk) continue;
 
     if (!isFalEndpointIdAllowed(node.data.falModelId)) {
-      await prisma.runStep.update({
-        where: { id: step.id },
-        data: {
-          status: "failed",
-          error: "Model is not allowed by server policy (FAL_MODEL_ALLOWLIST / FAL_MODEL_DENYLIST).",
-        },
-      });
-      await prisma.run.update({
-        where: { id: runId },
-        data: { status: "failed", finishedAt: new Date(), error: "Blocked model endpoint" },
-      });
+      await failRunStepBlockedModel(runId, step.id);
       return;
     }
 
@@ -763,6 +844,20 @@ async function failRun(runId: string, error: string) {
   await prisma.run.update({
     where: { id: runId },
     data: { status: "failed", finishedAt: new Date(), error },
+  });
+}
+
+async function failRunStepBlockedModel(runId: string, stepId: string) {
+  await prisma.runStep.update({
+    where: { id: stepId },
+    data: {
+      status: "failed",
+      error: "Model is not allowed by server policy (FAL_MODEL_ALLOWLIST / FAL_MODEL_DENYLIST).",
+    },
+  });
+  await prisma.run.update({
+    where: { id: runId },
+    data: { status: "failed", finishedAt: new Date(), error: "Blocked model endpoint" },
   });
 }
 
@@ -857,7 +952,7 @@ export async function handleFalWebhook(runId: string, stepId: string, body: unkn
   }
 
   const media = extractMediaFromFalData(payload);
-  const images = media.filter((m) => m.kind === "image" || m.kind === "unknown").map((m) => m.url);
+  const images = imageUrlsFromMediaItems(media);
   const text = extractTextFromFalData(payload);
 
   if (media.length === 0 && text == null && b?.status !== "OK") {

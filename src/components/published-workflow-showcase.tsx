@@ -147,37 +147,95 @@ function PublishedInputVideoNode({ data }: NodeProps) {
   );
 }
 
+const PUBLISHED_CONCAT_SLOTS = 8;
+
 function PublishedMediaProcessNode({ data }: NodeProps) {
   const d = data as { operation?: string };
   const op = d.operation ?? "extract_audio";
+  const isConcat = op === "concat_videos";
   return (
     <div className="motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-out min-w-[200px] max-w-[260px] rounded-xl border border-teal-500/25 bg-zinc-950/55 px-3 py-2 shadow-[0_12px_40px_rgba(0,0,0,0.35)] backdrop-blur-xl">
       <div className="text-[10px] font-semibold uppercase tracking-wide text-teal-300/90">Media process</div>
       <p className="mt-1 font-mono text-[11px] text-teal-200/90">{op}</p>
-      <div className="relative mt-3 min-h-[52px]">
-        <Handle
-          type="target"
-          position={Position.Left}
-          id="video_url"
-          className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !top-[20%] !-translate-y-1/2 !bg-teal-500/90`}
-        />
-        <Handle
-          type="target"
-          position={Position.Left}
-          id="image_urls"
-          className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !top-[50%] !-translate-y-1/2 !bg-teal-500/90`}
-        />
-        <Handle
-          type="target"
-          position={Position.Left}
-          id="audio_url"
-          className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !top-[80%] !-translate-y-1/2 !bg-teal-500/90`}
-        />
+      <div className={`relative mt-3 ${isConcat ? "min-h-[160px]" : "min-h-[72px]"}`}>
+        {!isConcat ? (
+          <>
+            <Handle
+              type="target"
+              position={Position.Left}
+              id="video_url"
+              className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !top-[14%] !-translate-y-1/2 !bg-teal-500/90`}
+            />
+            <Handle
+              type="target"
+              position={Position.Left}
+              id="image_urls"
+              className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !top-[38%] !-translate-y-1/2 !bg-teal-500/90`}
+            />
+            <Handle
+              type="target"
+              position={Position.Left}
+              id="audio_url"
+              className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !top-[62%] !-translate-y-1/2 !bg-teal-500/90`}
+            />
+            <Handle
+              type="target"
+              position={Position.Left}
+              id="barrier_in"
+              className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !top-[86%] !-translate-y-1/2 !bg-zinc-600/90`}
+            />
+          </>
+        ) : (
+          Array.from({ length: PUBLISHED_CONCAT_SLOTS }, (_, i) => {
+            const pct = ((i + 0.5) / PUBLISHED_CONCAT_SLOTS) * 100;
+            return (
+              <Handle
+                key={`video_${i}`}
+                type="target"
+                position={Position.Left}
+                id={`video_${i}`}
+                className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !-translate-y-1/2 !bg-teal-500/90`}
+                style={{ top: `${pct}%` }}
+              />
+            );
+          })
+        )}
         <Handle
           type="source"
           position={Position.Right}
           id="out"
           className={`${FLOW_HANDLE_PUBLISHED} !absolute !right-0 !top-1/2 !-translate-y-1/2 !bg-teal-400/90`}
+        />
+      </div>
+    </div>
+  );
+}
+
+function PublishedReviewGateNode({ data }: NodeProps) {
+  const d = data as { text?: string };
+  const t = (d.text ?? "").trim();
+  return (
+    <div className="motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-out min-w-[200px] max-w-[280px] rounded-xl border border-fuchsia-500/30 bg-zinc-950/55 px-3 py-2 shadow-[0_12px_40px_rgba(0,0,0,0.35)] backdrop-blur-xl">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-fuchsia-300/90">Review gate</div>
+      <p className="mt-1 line-clamp-4 text-[11px] text-zinc-400">{t || "—"}</p>
+      <div className="relative mt-2 min-h-[48px]">
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="in"
+          className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !top-[35%] !-translate-y-1/2 !bg-fuchsia-500/85`}
+        />
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="barrier_in"
+          className={`${FLOW_HANDLE_PUBLISHED} !absolute !left-0 !top-[65%] !-translate-y-1/2 !bg-zinc-600/85`}
+        />
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="out"
+          className={`${FLOW_HANDLE_PUBLISHED} !absolute !right-0 !top-1/2 !-translate-y-1/2 !bg-fuchsia-400/90`}
         />
       </div>
     </div>
@@ -337,6 +395,7 @@ const publishedNodeTypes = {
   input_video: PublishedInputVideoNode,
   input_group: PublishedInputGroupNode,
   media_process: PublishedMediaProcessNode,
+  review_gate: PublishedReviewGateNode,
   output_preview: PublishedOutputPreviewNode,
   fal_model: PublishedFalModelNode,
 };

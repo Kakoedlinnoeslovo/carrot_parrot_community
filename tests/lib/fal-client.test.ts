@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ValidationError } from "@fal-ai/client";
-import { formatFalClientError, isTransientFalNetworkError } from "./fal-client";
+import { formatFalClientError, isTransientFalNetworkError } from "@/lib/fal-client";
 
 describe("formatFalClientError", () => {
   it("expands ValidationError field errors instead of only HTTP status text", () => {

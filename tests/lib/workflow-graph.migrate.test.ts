@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { migrateWorkflowGraphEdges, workflowGraphSchema } from "./workflow-graph";
+import { migrateWorkflowGraphEdges, workflowGraphSchema } from "@/lib/workflow-graph";
 
 describe("migrateWorkflowGraphEdges", () => {
   it("maps legacy fal target in to explicit prompt for text input", () => {
