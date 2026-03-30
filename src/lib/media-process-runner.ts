@@ -7,6 +7,7 @@ import {
   downloadImageToTempFile,
   downloadVideoToTempFile,
   extractAudioMp3,
+  extractFramePngAtSecond,
   extractFramesPng,
   ffprobeDurationSeconds,
   imagesSequenceToMp4,
@@ -17,7 +18,7 @@ import {
 } from "@/lib/media/ffmpeg";
 import { segmentScenesWithOpticalFlow } from "@/lib/media/segment-video";
 import type { WorkflowGraph, WorkflowNode } from "@/lib/workflow-graph";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -109,6 +110,48 @@ export function collectMediaProcessInputs(
   return { videoUrl, audioUrl, videoUrls, imageUrls };
 }
 
+/**
+ * Video URLs for `concat_videos` in deterministic order: `targetHandle` `video_0`, `video_1`, …
+ * if present; otherwise lexical order of edge `id`.
+ */
+export function collectOrderedConcatVideoUrls(
+  graph: WorkflowGraph,
+  nodeId: string,
+  artifacts: Record<string, MergeArtifact | undefined>,
+): string[] {
+  type Row = { slot: number; edgeId: string; url: string };
+  const rows: Row[] = [];
+  for (const e of graph.edges) {
+    if (e.target !== nodeId) continue;
+    const art = artifacts[e.source];
+    const { videos } = urlsFromArtifact(art);
+    const v = firstVideoUrl(art) ?? videos[0];
+    if (!v) continue;
+    const th = (e.targetHandle ?? "").trim().toLowerCase();
+    const m = /^video_(\d+)$/.exec(th);
+    const slot = m ? parseInt(m[1]!, 10) : -1;
+    rows.push({ slot, edgeId: e.id, url: v });
+  }
+  const hasSlots = rows.some((r) => r.slot >= 0);
+  rows.sort((a, b) => {
+    if (hasSlots) {
+      const sa = a.slot >= 0 ? a.slot : 1_000_000;
+      const sb = b.slot >= 0 ? b.slot : 1_000_000;
+      if (sa !== sb) return sa - sb;
+    }
+    return a.edgeId.localeCompare(b.edgeId);
+  });
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const r of rows) {
+    if (!seen.has(r.url)) {
+      seen.add(r.url);
+      out.push(r.url);
+    }
+  }
+  return out;
+}
+
 async function uploadBlob(fal: FalClient, buf: Buffer, contentType: string): Promise<string> {
   const blob = new Blob([new Uint8Array(buf)], { type: contentType });
   return fal.storage.upload(blob);
@@ -181,8 +224,59 @@ export async function runMediaProcessNode(
       }
     }
 
+    if (op === "extract_keyframes") {
+      const url = inputs.videoUrl ?? inputs.videoUrls[0];
+      if (!url) throw new Error("extract_keyframes: missing video URL from upstream");
+      const maxSeg = Math.min(24, Math.max(1, params?.keyframeMaxSegments ?? 8));
+      const sceneTh = params?.sceneThreshold ?? 0.35;
+      const dl = await downloadVideoToTempFile(url);
+      try {
+        const dur = await ffprobeDurationSeconds(dl.filePath);
+        const { segments, method } = await segmentScenesWithOpticalFlow(dl.filePath, dur, sceneTh);
+        const use = segments.slice(0, maxSeg);
+        const media: MediaItem[] = [];
+        const images: string[] = [];
+        const frameDir = path.join(workDir, "kf");
+        await mkdir(frameDir, { recursive: true });
+        for (let i = 0; i < use.length; i++) {
+          const s = use[i]!;
+          const t = Math.max(0, (s.start + s.end) / 2);
+          const png = path.join(frameDir, `kf-${i}.png`);
+          await extractFramePngAtSecond(dl.filePath, png, t);
+          const buf = await readFileBuffer(png);
+          const u = await uploadBlob(fal, buf, "image/png");
+          images.push(u);
+          media.push({ url: u, kind: "image" });
+        }
+        const meta = JSON.stringify({
+          segments: use,
+          durationSec: dur,
+          segmentationMethod: method,
+          keyframeCount: images.length,
+        });
+        return { images, media, text: meta };
+      } finally {
+        await dl.cleanup();
+      }
+    }
+
+    if (op === "pick_image") {
+      const urls = inputs.imageUrls;
+      const idx = Math.max(0, Math.floor(params?.index ?? 0));
+      if (urls.length < 1) throw new Error("pick_image: need at least one upstream image URL");
+      if (idx >= urls.length) {
+        throw new Error(`pick_image: index ${idx} out of range (${urls.length} images)`);
+      }
+      const u = urls[idx]!;
+      return { images: [u], media: [{ url: u, kind: "image" }], text: undefined };
+    }
+
+    if (op === "sync_barrier") {
+      return { images: [], media: [], text: undefined };
+    }
+
     if (op === "concat_videos") {
-      const urls = inputs.videoUrls.length ? inputs.videoUrls : inputs.videoUrl ? [inputs.videoUrl] : [];
+      const urls = collectOrderedConcatVideoUrls(graph, node.id, artifacts);
       if (urls.length < 1) throw new Error("concat_videos: need at least one video URL");
       const localPaths: string[] = [];
       const cleanups: Array<() => Promise<void>> = [];
@@ -240,19 +334,15 @@ export async function runMediaProcessNode(
     if (op === "mux_audio_video") {
       let videoU = inputs.videoUrl ?? inputs.videoUrls[0];
       let audioU = inputs.audioUrl;
-      if (!videoU) {
+      if (!videoU || !audioU) {
         for (const e of graph.edges) {
           if (e.target !== node.id) continue;
-          if ((e.targetHandle ?? "").toLowerCase().includes("video")) {
+          const th = (e.targetHandle ?? "").toLowerCase();
+          if (!videoU && th.includes("video")) {
             const v = firstVideoUrl(artifacts[e.source]);
             if (v) videoU = v;
           }
-        }
-      }
-      if (!audioU) {
-        for (const e of graph.edges) {
-          if (e.target !== node.id) continue;
-          if ((e.targetHandle ?? "").toLowerCase().includes("audio")) {
+          if (!audioU && th.includes("audio")) {
             const a = firstAudioUrl(artifacts[e.source]);
             if (a) audioU = a;
           }
@@ -276,6 +366,6 @@ export async function runMediaProcessNode(
 
     throw new Error(`Unknown media_process operation: ${String(op)}`);
   } finally {
-    await import("node:fs/promises").then((fs) => fs.rm(workDir, { recursive: true, force: true }));
+    await rm(workDir, { recursive: true, force: true });
   }
 }

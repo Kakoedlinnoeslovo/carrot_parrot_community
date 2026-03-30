@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { FalClient } from "@/lib/fal-client";
-import { isFalHostedWorkflowEndpoint, runFalHostedWorkflowStream } from "./fal-hosted-workflow";
+import { isFalHostedWorkflowEndpoint, runFalHostedWorkflowStream } from "@/lib/fal-hosted-workflow";
 
 describe("isFalHostedWorkflowEndpoint", () => {
   it("is true for fal hosted workflow ids", () => {

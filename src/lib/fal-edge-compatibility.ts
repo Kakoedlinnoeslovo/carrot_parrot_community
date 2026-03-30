@@ -82,6 +82,7 @@ function inferInputNodeSourceKind(
   sourceHandle: string | null | undefined,
 ): "text" | "image" | "any" {
   if (source.type === "input_prompt") return "text";
+  if (source.type === "review_gate") return "text";
   if (source.type === "input_image") return "image";
   if (source.type === "input_video") return "image";
   if (source.type === "input_group") {
@@ -95,6 +96,7 @@ function inferInputNodeSourceKind(
     const sh = (sourceHandle ?? "out").trim() || "out";
     if (sh !== "out") return "any";
     if (source.data.operation === "segment_scenes") return "text";
+    if (source.data.operation === "sync_barrier") return "any";
     return "image";
   }
   return "any";

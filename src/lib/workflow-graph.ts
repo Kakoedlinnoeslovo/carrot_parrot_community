@@ -49,6 +49,9 @@ export const mediaProcessOperationSchema = z.enum([
   "extract_audio",
   "extract_frames",
   "segment_scenes",
+  "extract_keyframes",
+  "pick_image",
+  "sync_barrier",
   "concat_videos",
   "mux_audio_video",
   "images_to_video",
@@ -63,6 +66,10 @@ const mediaProcessParamsSchema = z
     secondsPerFrame: z.number().optional(),
     /** Optional max width; height scales proportionally. */
     maxWidth: z.number().optional(),
+    /** Pick Nth image from upstream `images` (0-based). */
+    index: z.number().optional(),
+    /** Max keyframes from optical-flow segments (cap). */
+    keyframeMaxSegments: z.number().optional(),
   })
   .optional();
 
@@ -99,6 +106,15 @@ export const workflowNodeSchema = z.discriminatedUnion("type", [
     data: z.object({
       /** Named slots; each has a source handle `id` for edges */
       slots: z.array(inputSlotSchema).default([]),
+    }),
+    position: z.object({ x: z.number(), y: z.number() }),
+  }),
+  z.object({
+    id: z.string().min(1),
+    type: z.literal("review_gate"),
+    data: z.object({
+      /** Editable caption (e.g. after vision); persisted on resume into step output. */
+      text: z.string().default(""),
     }),
     position: z.object({ x: z.number(), y: z.number() }),
   }),
@@ -143,17 +159,14 @@ export const workflowGraphSchema = z
   .superRefine((g, ctx) => {
     const nodeIds = new Set(g.nodes.map((n) => n.id));
     for (const e of g.edges) {
-      if (!nodeIds.has(e.source)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `Edge references missing source node: ${e.source}`,
-        });
-      }
-      if (!nodeIds.has(e.target)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `Edge references missing target node: ${e.target}`,
-        });
+      const checks: [string, string][] = [
+        [e.source, `Edge references missing source node: ${e.source}`],
+        [e.target, `Edge references missing target node: ${e.target}`],
+      ];
+      for (const [id, message] of checks) {
+        if (!nodeIds.has(id)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+        }
       }
     }
   });
@@ -181,6 +194,7 @@ function inferLegacyTargetHandle(graph: WorkflowGraph, edge: WorkflowEdge): stri
   if (!src || tgt?.type !== "fal_model") return "prompt";
 
   if (src.type === "input_prompt") return "prompt";
+  if (src.type === "review_gate") return "prompt";
   if (src.type === "input_image") return "image_url";
   if (src.type === "input_video") return "video_url";
 
@@ -224,14 +238,7 @@ function inferLegacyTargetHandle(graph: WorkflowGraph, edge: WorkflowEdge): stri
       if (isOutputPrimarilyTextual(srcData.openapiOutputKeys)) {
         return pickFirstTextInputKey(tgtData.openapiInputKeys);
       }
-      const tgtKeys = tgtData.openapiInputKeys;
-      const hasRasterIn = tgtKeys?.some((k) =>
-        /image|frame|mask|start_image|garment|model_|reference/i.test(k),
-      );
-      if (hasRasterIn) {
-        return pickImageInputKeyForTarget(tgt);
-      }
-      // Typical fal → fal: prior image into img2img / edit — default raster field
+      // Raster-capable target (or typical fal→fal img2img): map prior output to image field
       return pickImageInputKeyForTarget(tgt);
     }
     return "prompt";

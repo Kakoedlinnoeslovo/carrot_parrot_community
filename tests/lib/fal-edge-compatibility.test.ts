@@ -4,8 +4,8 @@ import {
   classifyWorkflowGraphEdges,
   graphHasBlockingEdgeIssues,
   inferFalModelSourceKind,
-} from "./fal-edge-compatibility";
-import type { WorkflowGraph } from "./workflow-graph";
+} from "@/lib/fal-edge-compatibility";
+import type { WorkflowGraph } from "@/lib/workflow-graph";
 
 describe("inferFalModelSourceKind", () => {
   it("treats caption-style outputs as text", () => {

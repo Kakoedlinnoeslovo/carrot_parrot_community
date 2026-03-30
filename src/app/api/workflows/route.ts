@@ -13,10 +13,14 @@ import { buildReplicateWorkflowFromVideoUrl } from "@/lib/replicate-marketing-te
 /** Long-running: download + OpenCV segmentation + optional Whisper/Tesseract. */
 export const maxDuration = 300;
 
+function unauthorized() {
+  return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+}
+
 export async function GET() {
   const session = await auth();
   if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return unauthorized();
   }
 
   const workflows = await prisma.workflow.findMany({
@@ -38,7 +42,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return unauthorized();
   }
 
   let graphJson: string;

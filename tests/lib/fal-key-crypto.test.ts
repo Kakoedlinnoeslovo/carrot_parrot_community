@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { decryptFalKey, encryptFalKey } from "./fal-key-crypto";
+import { decryptFalKey, encryptFalKey } from "@/lib/fal-key-crypto";
 
 describe("fal-key-crypto", () => {
   const prev = process.env.AUTH_SECRET;

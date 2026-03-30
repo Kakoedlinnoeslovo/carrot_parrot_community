@@ -42,7 +42,7 @@ import { prisma } from "@/lib/db";
 import { DEFAULT_WORKFLOW_GRAPH } from "@/lib/default-graph";
 import { mergeFalInput, sanitizeFalInput, type MergeArtifact } from "@/lib/fal-merge-input";
 import { parseWorkflowGraph } from "@/lib/workflow-graph";
-import { loadReuseReferenceStepsByNodeId, scheduleReadyFalSteps } from "./orchestrator";
+import { loadReuseReferenceStepsByNodeId, scheduleReadyFalSteps } from "@/lib/orchestrator";
 
 describe("loadReuseReferenceStepsByNodeId", () => {
   it("returns null when skipStepReuse is true", async () => {

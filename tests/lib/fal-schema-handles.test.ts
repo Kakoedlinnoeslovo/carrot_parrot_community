@@ -3,7 +3,7 @@ import {
   listMappableOutputKeysFromSchema,
   orderInputHandleKeys,
   orderOutputHandleKeys,
-} from "./fal-schema-handles";
+} from "@/lib/fal-schema-handles";
 
 describe("orderInputHandleKeys", () => {
   it("places prompt before acceleration (alphabet would not)", () => {

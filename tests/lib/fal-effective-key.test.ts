@@ -8,14 +8,14 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-vi.mock("./fal-key-crypto", () => ({
+vi.mock("@/lib/fal-key-crypto", () => ({
   decryptFalKey: vi.fn(() => "decrypted-user-key"),
 }));
 
 import { prisma } from "@/lib/db";
-import { decryptFalKey } from "./fal-key-crypto";
-import { graphNeedsFalKey, resolveEffectiveFalApiKey } from "./fal-effective-key";
-import { parseWorkflowGraph } from "./workflow-graph";
+import { decryptFalKey } from "@/lib/fal-key-crypto";
+import { graphNeedsFalKey, resolveEffectiveFalApiKey } from "@/lib/fal-effective-key";
+import { parseWorkflowGraph } from "@/lib/workflow-graph";
 
 describe("fal-effective-key", () => {
   const prevFal = process.env.FAL_KEY;

@@ -1,3 +1,14 @@
+/**
+ * Root **Server Component** layout — wraps every page. Default export must be a React
+ * component; `async` is allowed so we can `await auth()` on the server.
+ *
+ * Python analogy: like a Jinja `base.html` that every template extends, but this *is* React
+ * output — there is no separate template language. `"use client"` is **not** here, so this
+ * file runs only on the server (no browser hooks like `useState` at top level).
+ *
+ * - **`metadata`** — static SEO fields (like `<title>` / meta tags) for this segment.
+ * - **`children`** — the matched page (`page.tsx`) nested inside this shell.
+ */
 import type { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/react";
 import { Geist, Geist_Mono } from "next/font/google";
@@ -23,6 +34,7 @@ export const metadata: Metadata = {
     "Visual editor for multi-step AI pipelines powered by fal.ai—connect model nodes, run with your API key, publish and remix with the community.",
 };
 
+/** App shell: fonts, nav, session-aware links. `children` is the active route’s `page.tsx`. */
 export default async function RootLayout({
   children,
 }: Readonly<{

@@ -91,6 +91,14 @@ function resolveUpstream(
     return { texts: t ? [t] : [], urls: [] };
   }
 
+  if (sourceNode.type === "review_gate") {
+    const art = artifacts[edge.source];
+    const fromStep = art?.text?.trim();
+    const fromNode = (sourceNode.data.text ?? "").trim();
+    const t = fromStep || fromNode;
+    return { texts: t ? [t] : [], urls: [] };
+  }
+
   if (sourceNode.type === "input_image") {
     const raw = (sourceNode.data.imageUrl ?? "").trim();
     const ok = /^https?:\/\//i.test(raw) || /^data:image\//i.test(raw);

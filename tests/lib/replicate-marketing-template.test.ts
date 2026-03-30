@@ -43,7 +43,7 @@ describe("replicate-marketing-template", () => {
       expect(prompt.data.prompt).toContain("Buy now");
       expect(prompt.data.prompt).toContain("SALE");
     }
-    const nano = g.nodes.find((n) => n.id === "nano1");
+    const nano = g.nodes.find((n) => n.id === "nano_0");
     expect(nano?.type).toBe("fal_model");
     if (nano?.type === "fal_model") {
       expect(String(nano.data.falInput.prompt)).toContain("0.0–5.0s");

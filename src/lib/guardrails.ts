@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { getAllowedEmails, getEnvInt } from "@/lib/env";
 import type { WorkflowGraph } from "@/lib/workflow-graph";
 
-const maxNodes = () => getEnvInt("MAX_NODES_PER_GRAPH", 20);
+const maxNodes = () => getEnvInt("MAX_NODES_PER_GRAPH", 64);
 const maxRunsDay = () => getEnvInt("MAX_RUNS_PER_USER_PER_DAY", 50);
 const maxConcurrent = () => getEnvInt("MAX_CONCURRENT_RUNS_PER_USER", 3);
 
@@ -16,8 +16,9 @@ export async function assertCanRunWorkflow(userId: string, email: string, graph:
     throw new Error("This beta is invite-only for runs.");
   }
 
-  if (graph.nodes.length > maxNodes()) {
-    throw new Error(`Graph exceeds max nodes (${maxNodes()}).`);
+  const nodeLimit = maxNodes();
+  if (graph.nodes.length > nodeLimit) {
+    throw new Error(`Graph exceeds max nodes (${nodeLimit}).`);
   }
 
   const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -29,8 +30,9 @@ export async function assertCanRunWorkflow(userId: string, email: string, graph:
     daily = 0;
   }
 
-  if (daily >= maxRunsDay()) {
-    throw new Error(`Daily run limit reached (${maxRunsDay()}). Try tomorrow.`);
+  const runsPerDay = maxRunsDay();
+  if (daily >= runsPerDay) {
+    throw new Error(`Daily run limit reached (${runsPerDay}). Try tomorrow.`);
   }
 
   const concurrent = await prisma.run.count({
@@ -40,8 +42,9 @@ export async function assertCanRunWorkflow(userId: string, email: string, graph:
     },
   });
 
-  if (concurrent >= maxConcurrent()) {
-    throw new Error(`Too many concurrent runs (max ${maxConcurrent()}).`);
+  const maxConcurrentRuns = maxConcurrent();
+  if (concurrent >= maxConcurrentRuns) {
+    throw new Error(`Too many concurrent runs (max ${maxConcurrentRuns}).`);
   }
 }
 

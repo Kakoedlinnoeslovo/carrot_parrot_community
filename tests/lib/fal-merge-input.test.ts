@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { mergeFalInput, sanitizeFalInput } from "./fal-merge-input";
-import type { WorkflowGraph } from "./workflow-graph";
+import { mergeFalInput, sanitizeFalInput } from "@/lib/fal-merge-input";
+import type { WorkflowGraph } from "@/lib/workflow-graph";
 
 function graph(
   edges: WorkflowGraph["edges"],

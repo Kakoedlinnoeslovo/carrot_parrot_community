@@ -62,6 +62,7 @@ function inferSourceWireKind(
   if (!n) return "any";
   if (n.type === "input_image") return "image";
   if (n.type === "input_prompt") return "text";
+  if (n.type === "review_gate") return "text";
   if (n.type === "input_group") {
     const slots = (n.data as { slots?: InputSlot[] }).slots ?? [];
     const slot = slots.find((s) => s.id === sourceHandle);
@@ -74,6 +75,7 @@ function inferSourceWireKind(
     if (h === "out" || !String(h).trim()) {
       const op = (n.data as { operation?: string }).operation;
       if (op === "segment_scenes") return "text";
+      if (op === "sync_barrier") return "any";
       return "image";
     }
     return "any";
@@ -106,6 +108,14 @@ function inferTargetWireExpectation(
   if (n.type === "media_process") {
     const h = targetHandle ?? "";
     if (/^(video_url|audio_url|image_urls)$/i.test(h)) return "image";
+    if (h === "barrier_in") return "any";
+    if (/^video_\d+$/i.test(h)) return "image";
+    return "any";
+  }
+  if (n.type === "review_gate") {
+    const h = targetHandle ?? "";
+    if (h === "in") return "text";
+    if (h === "barrier_in") return "any";
     return "any";
   }
   if (n.type === "output_preview") return "image";
@@ -136,6 +146,9 @@ function isWorkflowConnectionValid(nodes: Node[], conn: Connection | Edge): bool
     return false;
   }
   if (tgtNode?.type === "media_process" && (!th || !String(th).trim())) {
+    return false;
+  }
+  if (tgtNode?.type === "review_gate" && (!th || !String(th).trim())) {
     return false;
   }
 
@@ -243,6 +256,60 @@ function InputVideoNode({ id, data }: NodeProps) {
   );
 }
 
+function ReviewGateNode({ id, data }: NodeProps) {
+  const d = data as { text?: string; _runStepStatus?: string };
+  const blocked = d._runStepStatus === "blocked";
+  return (
+    <div
+      className={`min-w-[220px] max-w-[min(100vw,380px)] rounded-lg border px-3 py-2 pr-2 shadow-lg ${
+        blocked
+          ? "border-amber-500/60 bg-amber-950/40 ring-2 ring-amber-500/30"
+          : "border-fuchsia-500/45 bg-zinc-900/90"
+      }`}
+    >
+      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-fuchsia-400">Review gate</div>
+      <div className="text-[10px] text-zinc-500">Node {id.slice(0, 8)}…</div>
+      {blocked ? (
+        <p className="mt-1 text-[11px] text-amber-200/90">Run paused — edit caption in the sidebar, then Resume.</p>
+      ) : (
+        <p className="mt-1 line-clamp-3 text-[11px] text-zinc-400">{d.text?.trim() || "Caption (editable)"}</p>
+      )}
+      <div className="relative mt-3 min-h-[56px]">
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="in"
+          className={`${FLOW_HANDLE_BASE} !absolute !left-0 !top-[30%] !-translate-x-0 !-translate-y-1/2 !border-fuchsia-500/40 !bg-fuchsia-600`}
+          title="Vision / caption input (text)"
+        />
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="barrier_in"
+          className={`${FLOW_HANDLE_BASE} !absolute !left-0 !top-[70%] !-translate-x-0 !-translate-y-1/2 !border-zinc-500/40 !bg-zinc-600`}
+          title="Sync barrier (all lanes ready)"
+        />
+        <div className="pointer-events-none flex h-full flex-col justify-between py-0.5 pl-4 text-[9px] text-zinc-500">
+          <span className="font-mono">in</span>
+          <span className="font-mono">barrier_in</span>
+        </div>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="out"
+          className={`${FLOW_HANDLE_BASE} !absolute !right-0 !top-1/2 !-translate-y-1/2 !border-fuchsia-500/40 !bg-fuchsia-500`}
+          title="Edited caption → downstream"
+        />
+        <span className="pointer-events-none absolute right-6 top-1/2 -translate-y-1/2 font-mono text-[10px] text-fuchsia-300">
+          out
+        </span>
+      </div>
+    </div>
+  );
+}
+
+const CONCAT_VIDEO_SLOT_COUNT = 8;
+
 function MediaProcessNode({ id, data }: NodeProps) {
   const d = data as { operation?: string; previewItems?: RunOutputItem[] };
   const op = d.operation ?? "extract_audio";
@@ -250,6 +317,7 @@ function MediaProcessNode({ id, data }: NodeProps) {
   const imageItems = items.filter((x) => x.kind === "image" || x.kind === "unknown");
   const videoItem = items.find((x) => x.kind === "video");
   const audioItem = items.find((x) => x.kind === "audio");
+  const isConcat = op === "concat_videos";
   return (
     <div className="min-w-[220px] max-w-[min(100vw,400px)] rounded-lg border border-teal-500/45 bg-zinc-900/90 px-3 py-2 pr-2 shadow-lg">
       <div className="mb-1 text-xs font-medium uppercase tracking-wide text-teal-400">Media process</div>
@@ -296,33 +364,71 @@ function MediaProcessNode({ id, data }: NodeProps) {
           <audio src={audioItem.url} controls className="w-full min-w-0" />
         </div>
       ) : null}
-      <div className="relative mt-3 min-h-[72px]">
-        <Handle
-          type="target"
-          position={Position.Left}
-          id="video_url"
-          className={`${FLOW_HANDLE_BASE} !absolute !left-0 !top-[18%] !-translate-x-0 !-translate-y-1/2 !border-teal-500/40 !bg-teal-600`}
-          title="video_url"
-        />
-        <Handle
-          type="target"
-          position={Position.Left}
-          id="image_urls"
-          className={`${FLOW_HANDLE_BASE} !absolute !left-0 !top-[50%] !-translate-x-0 !-translate-y-1/2 !border-teal-500/40 !bg-teal-600`}
-          title="image_urls — image sequence for images_to_video"
-        />
-        <Handle
-          type="target"
-          position={Position.Left}
-          id="audio_url"
-          className={`${FLOW_HANDLE_BASE} !absolute !left-0 !top-[82%] !-translate-x-0 !-translate-y-1/2 !border-teal-500/40 !bg-teal-600`}
-          title="audio_url"
-        />
-        <div className="pointer-events-none flex h-full flex-col justify-between py-0.5 pl-4 text-[9px] text-zinc-500">
-          <span className="font-mono">video_url</span>
-          <span className="font-mono">image_urls</span>
-          <span className="font-mono">audio_url</span>
-        </div>
+      <div
+        className={`relative mt-3 ${isConcat ? "min-h-[200px]" : "min-h-[96px]"}`}
+      >
+        {!isConcat ? (
+          <>
+            <Handle
+              type="target"
+              position={Position.Left}
+              id="video_url"
+              className={`${FLOW_HANDLE_BASE} !absolute !left-0 !top-[14%] !-translate-x-0 !-translate-y-1/2 !border-teal-500/40 !bg-teal-600`}
+              title="video_url"
+            />
+            <Handle
+              type="target"
+              position={Position.Left}
+              id="image_urls"
+              className={`${FLOW_HANDLE_BASE} !absolute !left-0 !top-[38%] !-translate-x-0 !-translate-y-1/2 !border-teal-500/40 !bg-teal-600`}
+              title="image_urls — image sequence for images_to_video"
+            />
+            <Handle
+              type="target"
+              position={Position.Left}
+              id="audio_url"
+              className={`${FLOW_HANDLE_BASE} !absolute !left-0 !top-[62%] !-translate-x-0 !-translate-y-1/2 !border-teal-500/40 !bg-teal-600`}
+              title="audio_url"
+            />
+            <Handle
+              type="target"
+              position={Position.Left}
+              id="barrier_in"
+              className={`${FLOW_HANDLE_BASE} !absolute !left-0 !top-[86%] !-translate-x-0 !-translate-y-1/2 !border-zinc-500/40 !bg-zinc-600`}
+              title="barrier_in — ordering / sync"
+            />
+            <div className="pointer-events-none flex h-full flex-col justify-between py-0.5 pl-4 text-[9px] text-zinc-500">
+              <span className="font-mono">video_url</span>
+              <span className="font-mono">image_urls</span>
+              <span className="font-mono">audio_url</span>
+              <span className="font-mono">barrier_in</span>
+            </div>
+          </>
+        ) : (
+          <>
+            {Array.from({ length: CONCAT_VIDEO_SLOT_COUNT }, (_, i) => {
+              const pct = ((i + 0.5) / CONCAT_VIDEO_SLOT_COUNT) * 100;
+              return (
+                <Handle
+                  key={`video_${i}`}
+                  type="target"
+                  position={Position.Left}
+                  id={`video_${i}`}
+                  className={`${FLOW_HANDLE_BASE} !absolute !left-0 !-translate-x-0 !-translate-y-1/2 !border-teal-500/40 !bg-teal-600`}
+                  style={{ top: `${pct}%` }}
+                  title={`video_${i} — concat order`}
+                />
+              );
+            })}
+            <div className="pointer-events-none absolute inset-y-0 left-4 flex flex-col justify-evenly py-1 text-[8px] text-zinc-500">
+              {Array.from({ length: CONCAT_VIDEO_SLOT_COUNT }, (_, i) => (
+                <span key={i} className="font-mono">
+                  video_{i}
+                </span>
+              ))}
+            </div>
+          </>
+        )}
         <Handle
           type="source"
           position={Position.Right}
@@ -585,7 +691,10 @@ function InputVideoNodeSettings({
 const MEDIA_PROCESS_OPS = [
   "extract_audio",
   "extract_frames",
+  "extract_keyframes",
+  "pick_image",
   "segment_scenes",
+  "sync_barrier",
   "concat_videos",
   "mux_audio_video",
   "images_to_video",
@@ -862,6 +971,7 @@ const nodeTypes = {
   input_video: InputVideoNode,
   input_group: InputGroupNode,
   media_process: MediaProcessNode,
+  review_gate: ReviewGateNode,
   output_preview: OutputPreviewNode,
   fal_model: FalModelNode,
 };
@@ -981,6 +1091,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
   const [wfTitle, setWfTitle] = useState(title);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [runId, setRunId] = useState<string | null>(null);
+  const [resumeBusy, setResumeBusy] = useState(false);
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [pubSlug, setPubSlug] = useState<string | null>(slug);
@@ -1016,6 +1127,9 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
   }, []);
 
   const runInProgress = runStatus === "pending" || runStatus === "running";
+  const runPaused = runStatus === "paused";
+  const runShowsStepOverlay =
+    runStatus === "pending" || runStatus === "running" || runStatus === "paused";
 
   useEffect(() => {
     if (!runStartedAtIso || !runInProgress) return;
@@ -1086,7 +1200,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
         const mid = String((n.data as { falModelId?: string }).falModelId ?? "").trim();
         const detail = mid ? detailByEndpoint[mid] : undefined;
         const inputKeys = listMappableInputKeysFromSchema(detail?.input ?? null);
-        const stepSt = runInProgress ? runStepByNodeId[n.id] : undefined;
+        const stepSt = runShowsStepOverlay ? runStepByNodeId[n.id] : undefined;
         return {
           ...n,
           data: {
@@ -1096,9 +1210,20 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
           },
         };
       }
+      if (n.type === "review_gate") {
+        const stepSt = runShowsStepOverlay ? runStepByNodeId[n.id] : undefined;
+        if (!stepSt) return n;
+        return {
+          ...n,
+          data: {
+            ...(n.data as Record<string, unknown>),
+            _runStepStatus: stepSt,
+          },
+        };
+      }
       return n;
     });
-  }, [nodes, artifactPreviewByNodeId, detailByEndpoint, runInProgress, runStepByNodeId]);
+  }, [nodes, artifactPreviewByNodeId, detailByEndpoint, runShowsStepOverlay, runStepByNodeId]);
 
   const selectedNode = nodes.find((n) => n.id === selectedId) ?? null;
 
@@ -1320,6 +1445,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       | "input_video"
       | "input_group"
       | "media_process"
+      | "review_gate"
       | "output_preview"
       | "fal_model",
   ) => {
@@ -1343,7 +1469,9 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
               ? { videoUrl: "" }
               : kind === "media_process"
                 ? { operation: "extract_audio", params: {} }
-                : kind === "input_group"
+                : kind === "review_gate"
+                  ? { text: "" }
+                  : kind === "input_group"
                   ? {
                       slots: [
                         {
@@ -1484,6 +1612,37 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
     setRunStatus("running");
   };
 
+  const resumePausedRun = async () => {
+    if (!runId || runStatus !== "paused") return;
+    setResumeBusy(true);
+    setRunError(null);
+    try {
+      await save();
+      const graph = flowToGraph(nodes, edges);
+      const gateTexts: Record<string, string> = {};
+      for (const n of nodes) {
+        if (n.type === "review_gate") {
+          gateTexts[n.id] = String((n.data as { text?: string }).text ?? "");
+        }
+      }
+      const res = await fetch(`/api/runs/${runId}/resume`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gateTexts,
+          graphJson: JSON.stringify(graph),
+        }),
+      });
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(j.error ?? res.statusText);
+      setRunStatus("running");
+    } catch (e) {
+      setRunError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setResumeBusy(false);
+    }
+  };
+
   const updateSelectedData = (patch: Record<string, unknown>) => {
     if (!selectedNode) return;
     setNodes((nds) =>
@@ -1605,6 +1764,13 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
             </button>
             <button
               type="button"
+              onClick={() => addNode("review_gate")}
+              className="rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 ring-1 ring-fuchsia-900/50 hover:bg-zinc-700"
+            >
+              + Review gate
+            </button>
+            <button
+              type="button"
               onClick={() => addNode("input_group")}
               className="rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 ring-1 ring-zinc-600 hover:bg-zinc-700"
             >
@@ -1679,6 +1845,22 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
             <p className="mt-2 text-sm text-zinc-300">
               Status: <span className="text-orange-400">{runStatus}</span>
             </p>
+          )}
+          {runPaused && (
+            <div className="mt-3 rounded-md border border-amber-600/50 bg-amber-950/35 p-3">
+              <p className="text-sm text-amber-100/90">
+                Run is paused at review gates. Edit captions on each <span className="font-mono">review_gate</span> node
+                in the sidebar, save if needed, then resume.
+              </p>
+              <button
+                type="button"
+                disabled={!runId || resumeBusy}
+                onClick={() => void resumePausedRun()}
+                className="mt-2 rounded-md bg-amber-600 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-500 disabled:opacity-50"
+              >
+                {resumeBusy ? "Resuming…" : "Resume run"}
+              </button>
+            </div>
           )}
           {runInProgress && runElapsedLabel && (
             <p className="mt-1 text-xs text-zinc-500">
@@ -1809,6 +1991,21 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
               onVideoUrlChange={(videoUrl) => updateSelectedData({ videoUrl })}
             />
           )}
+          {selectedNode?.type === "review_gate" && (
+            <div className="mt-2 space-y-2">
+              <label className="text-xs text-zinc-500">Caption (fed to downstream fal merge as text)</label>
+              <textarea
+                className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
+                rows={5}
+                value={String((selectedNode.data as { text?: string }).text ?? "")}
+                onChange={(e) => updateSelectedData({ text: e.target.value })}
+              />
+              <p className="text-[11px] leading-snug text-zinc-600">
+                Wire <span className="font-mono">in</span> from vision (text). Optional <span className="font-mono">barrier_in</span> from{" "}
+                <span className="font-mono">sync_barrier</span> so all lanes align before pause.
+              </p>
+            </div>
+          )}
           {selectedNode?.type === "media_process" && (
             <div className="mt-2 space-y-2">
               <label className="text-xs text-zinc-500">Operation</label>
@@ -1872,6 +2069,92 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
                       }}
                     />
                   </div>
+                </>
+              ) : null}
+              {String((selectedNode.data as { operation?: string }).operation ?? "") === "extract_keyframes" ? (
+                <>
+                  <label className="text-xs text-zinc-500">Params (extract_keyframes)</label>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        max={24}
+                        className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-100"
+                        placeholder="keyframeMaxSegments"
+                        title="Max segments (keyframes)"
+                        value={
+                          Number(
+                            (selectedNode.data as { params?: { keyframeMaxSegments?: number } }).params
+                              ?.keyframeMaxSegments ?? "",
+                          ) || ""
+                        }
+                        onChange={(e) => {
+                          const v = e.target.value === "" ? undefined : Number(e.target.value);
+                          updateSelectedData({
+                            params: {
+                              ...((selectedNode.data as { params?: Record<string, unknown> }).params ?? {}),
+                              ...(v != null && !Number.isNaN(v)
+                                ? { keyframeMaxSegments: v }
+                                : { keyframeMaxSegments: undefined }),
+                            },
+                          });
+                        }}
+                      />
+                      <input
+                        type="number"
+                        step="0.05"
+                        min={0.05}
+                        max={1}
+                        className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-100"
+                        placeholder="sceneThreshold"
+                        title="Optical flow scene cut sensitivity"
+                        value={
+                          Number(
+                            (selectedNode.data as { params?: { sceneThreshold?: number } }).params?.sceneThreshold ??
+                              "",
+                          ) || ""
+                        }
+                        onChange={(e) => {
+                          const v = e.target.value === "" ? undefined : Number(e.target.value);
+                          updateSelectedData({
+                            params: {
+                              ...((selectedNode.data as { params?: Record<string, unknown> }).params ?? {}),
+                              ...(v != null && !Number.isNaN(v)
+                                ? { sceneThreshold: v }
+                                : { sceneThreshold: undefined }),
+                            },
+                          });
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[11px] leading-snug text-zinc-600">
+                    One PNG per optical-flow segment (midpoint). Outputs <span className="font-mono">image_urls</span> for{" "}
+                    <span className="font-mono">pick_image</span> lanes.
+                  </p>
+                </>
+              ) : null}
+              {String((selectedNode.data as { operation?: string }).operation ?? "") === "pick_image" ? (
+                <>
+                  <label className="text-xs text-zinc-500">Params (pick_image)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={64}
+                    className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-100"
+                    placeholder="index (0-based)"
+                    value={(selectedNode.data as { params?: { index?: number } }).params?.index ?? 0}
+                    onChange={(e) => {
+                      const v = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                      updateSelectedData({
+                        params: {
+                          ...((selectedNode.data as { params?: Record<string, unknown> }).params ?? {}),
+                          index: Number.isNaN(v) ? 0 : v,
+                        },
+                      });
+                    }}
+                  />
                 </>
               ) : null}
               {String((selectedNode.data as { operation?: string }).operation ?? "") === "images_to_video" ? (

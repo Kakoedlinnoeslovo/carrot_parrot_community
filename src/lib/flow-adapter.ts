@@ -1,6 +1,10 @@
 import type { Edge, Node } from "@xyflow/react";
 import type { WorkflowGraph } from "@/lib/workflow-graph";
-import { migrateWorkflowGraphEdges, workflowGraphSchema } from "@/lib/workflow-graph";
+import {
+  mediaProcessOperationSchema,
+  migrateWorkflowGraphEdges,
+  workflowGraphSchema,
+} from "@/lib/workflow-graph";
 
 const DEFAULT_FAL_MODEL = "fal-ai/flux/schnell";
 const DEFAULT_FAL_INPUT: Record<string, unknown> = {
@@ -42,6 +46,14 @@ export function graphToFlow(graph: WorkflowGraph): { nodes: Node[]; edges: Edge[
           type: "input_video",
           position: n.position,
           data: { videoUrl: n.data.videoUrl },
+        };
+      }
+      if (n.type === "review_gate") {
+        return {
+          id: n.id,
+          type: "review_gate",
+          position: n.position,
+          data: { text: n.data.text ?? "" },
         };
       }
       if (n.type === "media_process") {
@@ -129,6 +141,15 @@ export function flowToGraph(nodes: Node[], edges: Edge[]): WorkflowGraph {
         data: { videoUrl: d.videoUrl ?? "" },
       };
     }
+    if (n.type === "review_gate") {
+      const d = n.data as { text?: string };
+      return {
+        id: n.id,
+        type: "review_gate" as const,
+        position: n.position,
+        data: { text: d.text ?? "" },
+      };
+    }
     if (n.type === "media_process") {
       const d = n.data as {
         operation?: string;
@@ -138,19 +159,12 @@ export function flowToGraph(nodes: Node[], edges: Edge[]): WorkflowGraph {
           sceneThreshold?: number;
           secondsPerFrame?: number;
           maxWidth?: number;
+          index?: number;
+          keyframeMaxSegments?: number;
         };
       };
-      let op = d.operation;
-      if (
-        op !== "extract_audio" &&
-        op !== "extract_frames" &&
-        op !== "segment_scenes" &&
-        op !== "concat_videos" &&
-        op !== "mux_audio_video" &&
-        op !== "images_to_video"
-      ) {
-        op = "extract_audio";
-      }
+      const parsed = mediaProcessOperationSchema.safeParse(d.operation);
+      const op = parsed.success ? parsed.data : "extract_audio";
       return {
         id: n.id,
         type: "media_process" as const,
