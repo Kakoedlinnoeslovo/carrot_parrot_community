@@ -8,7 +8,10 @@ import {
   type MarketingVideoAnalysis,
   parseMarketingVideoAnalysis,
 } from "@/lib/marketing-video-analyzer";
-import { buildReplicateWorkflowFromVideoUrl } from "@/lib/replicate-marketing-template";
+import {
+  buildReplicateManualKeyframeWorkflowFromVideoUrl,
+  buildReplicateWorkflowFromVideoUrl,
+} from "@/lib/replicate-marketing-template";
 
 /** Long-running: download + OpenCV segmentation + optional Whisper/Tesseract. */
 export const maxDuration = 300;
@@ -78,7 +81,12 @@ export async function POST(req: Request) {
       const includeSpeechOcr = (rawBody as { includeSpeechOcrInPrompts?: boolean }).includeSpeechOcrInPrompts;
       const mergeOpts =
         includeSpeechOcr === false ? { includeSpeech: false, includeOcr: false } : undefined;
-      const graph = buildReplicateWorkflowFromVideoUrl(videoUrl, analysis, mergeOpts);
+      /** Default `manual`: `video_keyframe_picker` + `extract_keyframes_manual`. Pass `optical_flow` for `input_video` + `extract_keyframes`. */
+      const keyframeMode = String((rawBody as { keyframeMode?: string }).keyframeMode ?? "manual").toLowerCase();
+      const useOpticalFlow = keyframeMode === "optical_flow";
+      const graph = useOpticalFlow
+        ? buildReplicateWorkflowFromVideoUrl(videoUrl, analysis, mergeOpts)
+        : buildReplicateManualKeyframeWorkflowFromVideoUrl(videoUrl, analysis, mergeOpts);
       graphJson = JSON.stringify(graph);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

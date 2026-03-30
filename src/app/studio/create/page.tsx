@@ -169,7 +169,9 @@ export default function CreateMarketingWorkflowPage() {
         FFmpeg/OpenCV (optical flow when Python is available), optionally run local speech-to-text (Whisper CLI) and
         on-screen text OCR (Tesseract) if those tools are on the server.{" "}
         <span className="text-zinc-300">Generative fal steps</span> (Nano Banana, Kling, storage uploads) use your saved
-        fal API key or credits as elsewhere in Studio.
+        fal API key or credits as elsewhere in Studio. New workflows use the{" "}
+        <span className="text-zinc-300">Video keyframes</span> picker and manual frame times by default (edit the
+        timeline in Studio before running).
       </p>
 
       <div className="mt-8">
