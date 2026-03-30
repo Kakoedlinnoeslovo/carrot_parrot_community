@@ -75,7 +75,10 @@ export async function POST(req: Request) {
         }
         analysis = parsed.data;
       }
-      const graph = buildReplicateWorkflowFromVideoUrl(videoUrl, analysis);
+      const includeSpeechOcr = (rawBody as { includeSpeechOcrInPrompts?: boolean }).includeSpeechOcrInPrompts;
+      const mergeOpts =
+        includeSpeechOcr === false ? { includeSpeech: false, includeOcr: false } : undefined;
+      const graph = buildReplicateWorkflowFromVideoUrl(videoUrl, analysis, mergeOpts);
       graphJson = JSON.stringify(graph);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

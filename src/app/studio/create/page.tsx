@@ -45,6 +45,8 @@ export default function CreateMarketingWorkflowPage() {
   const [error, setError] = useState<string | null>(null);
   const [progressLabel, setProgressLabel] = useState("");
   const [skipAnalysis, setSkipAnalysis] = useState(false);
+  /** When analysis runs, include Whisper/OCR snippets in merged prompts (timeline/segments always merged). */
+  const [includeSpeechOcrInPrompts, setIncludeSpeechOcrInPrompts] = useState(true);
   const [progressMode, setProgressMode] = useState<"hidden" | "indeterminate" | "determinate">("hidden");
   const [progressPercent, setProgressPercent] = useState(0);
 
@@ -132,6 +134,7 @@ export default function CreateMarketingWorkflowPage() {
           title: "Marketing ad replica",
           analyze: false,
           analysis: aj.analysis,
+          includeSpeechOcrInPrompts,
         }),
       });
       const j = (await res.json()) as { workflow?: { id: string }; error?: string };
@@ -201,6 +204,18 @@ export default function CreateMarketingWorkflowPage() {
           />
           Skip analysis (faster; baseline template only, no segment/ASR/OCR hints in prompts)
         </label>
+        {!skipAnalysis ? (
+          <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm text-zinc-400">
+            <input
+              type="checkbox"
+              checked={includeSpeechOcrInPrompts}
+              disabled={busy}
+              onChange={(e) => setIncludeSpeechOcrInPrompts(e.target.checked)}
+              className="rounded border-zinc-600"
+            />
+            Include speech and on-screen text (OCR) in prompts
+          </label>
+        ) : null}
         <label className="mt-4 inline-flex cursor-pointer items-center rounded-lg border border-zinc-600 bg-zinc-800 px-4 py-2 text-sm text-zinc-200 hover:bg-zinc-700 disabled:opacity-50">
           {phase === "uploading" ? "Uploading…" : "Upload video"}
           <input

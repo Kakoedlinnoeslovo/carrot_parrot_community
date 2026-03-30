@@ -157,6 +157,47 @@ async function uploadBlob(fal: FalClient, buf: Buffer, contentType: string): Pro
   return fal.storage.upload(blob);
 }
 
+const MANUAL_KEYFRAME_MAX = 24;
+
+function normalizeManualFrameTimes(raw: number[], durationSec: number): number[] {
+  const seen = new Set<number>();
+  const out: number[] = [];
+  for (const t of raw) {
+    if (typeof t !== "number" || !Number.isFinite(t)) continue;
+    const clamped = Math.max(0, Math.min(durationSec, t));
+    const rounded = Math.round(clamped * 1000) / 1000;
+    if (seen.has(rounded)) continue;
+    seen.add(rounded);
+    out.push(rounded);
+    if (out.length >= MANUAL_KEYFRAME_MAX) break;
+  }
+  out.sort((a, b) => a - b);
+  return out;
+}
+
+/** Seconds for `extract_keyframes_manual`: `params.frameTimesSec` or any upstream `video_keyframe_picker`. */
+export function frameTimesForManualExtract(
+  graph: WorkflowGraph,
+  mediaNodeId: string,
+  params: { frameTimesSec?: number[] },
+): number[] {
+  const fromParams = params.frameTimesSec;
+  if (Array.isArray(fromParams) && fromParams.length > 0) {
+    return fromParams.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+  }
+  for (const e of graph.edges) {
+    if (e.target !== mediaNodeId) continue;
+    const n = graph.nodes.find((x) => x.id === e.source);
+    if (n?.type === "video_keyframe_picker") {
+      const times = n.data.frameTimesSec;
+      if (Array.isArray(times) && times.length > 0) {
+        return times.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+      }
+    }
+  }
+  return [];
+}
+
 export async function runMediaProcessNode(
   node: Extract<WorkflowNode, { type: "media_process" }>,
   graph: WorkflowGraph,
@@ -253,6 +294,45 @@ export async function runMediaProcessNode(
           durationSec: dur,
           segmentationMethod: method,
           keyframeCount: images.length,
+        });
+        return { images, media, text: meta };
+      } finally {
+        await dl.cleanup();
+      }
+    }
+
+    if (op === "extract_keyframes_manual") {
+      const url = inputs.videoUrl ?? inputs.videoUrls[0];
+      if (!url) throw new Error("extract_keyframes_manual: missing video URL from upstream");
+      let times = frameTimesForManualExtract(graph, node.id, params as { frameTimesSec?: number[] });
+      if (times.length < 1) {
+        throw new Error(
+          "extract_keyframes_manual: set frame times on the Video keyframe picker node or params.frameTimesSec",
+        );
+      }
+      const dl = await downloadVideoToTempFile(url);
+      try {
+        const dur = await ffprobeDurationSeconds(dl.filePath);
+        times = normalizeManualFrameTimes(times, dur);
+        if (times.length < 1) throw new Error("extract_keyframes_manual: no valid times after clamping to video duration");
+        const media: MediaItem[] = [];
+        const images: string[] = [];
+        const frameDir = path.join(workDir, "kf-manual");
+        await mkdir(frameDir, { recursive: true });
+        for (let i = 0; i < times.length; i++) {
+          const t = times[i]!;
+          const png = path.join(frameDir, `kf-${i}.png`);
+          await extractFramePngAtSecond(dl.filePath, png, t);
+          const buf = await readFileBuffer(png);
+          const u = await uploadBlob(fal, buf, "image/png");
+          images.push(u);
+          media.push({ url: u, kind: "image" });
+        }
+        const meta = JSON.stringify({
+          frameTimesSec: times,
+          durationSec: dur,
+          keyframeCount: images.length,
+          method: "manual",
         });
         return { images, media, text: meta };
       } finally {

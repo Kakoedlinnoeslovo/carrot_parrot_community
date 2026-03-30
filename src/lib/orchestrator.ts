@@ -602,6 +602,23 @@ export async function processRun(runId: string) {
         },
       });
     }
+    if (node.type === "video_keyframe_picker") {
+      const raw = (node.data.videoUrl ?? "").trim();
+      const ok = /^https?:\/\//i.test(raw);
+      const media: MediaItem[] = ok && raw ? [{ url: raw, kind: "video" }] : [];
+      await prisma.runStep.updateMany({
+        where: { runId, nodeId: node.id, status: "pending" },
+        data: {
+          status: "succeeded",
+          inputsJson: JSON.stringify({}),
+          outputsJson: JSON.stringify({
+            text: undefined,
+            images: [],
+            media,
+          } satisfies Artifact),
+        },
+      });
+    }
   }
 
   await scheduleReadyMediaProcessSteps(runId, graph, fal);

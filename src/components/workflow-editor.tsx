@@ -71,6 +71,7 @@ function inferSourceWireKind(
     return "any";
   }
   if (n.type === "input_video") return "image";
+  if (n.type === "video_keyframe_picker") return "image";
   if (n.type === "media_process") {
     const h = sourceHandle ?? "out";
     if (h === "out" || !String(h).trim()) {
@@ -251,6 +252,135 @@ function InputVideoNode({ id, data }: NodeProps) {
           id="video"
           className={`${FLOW_HANDLE_BASE} !absolute !right-0 !top-1/2 !-translate-y-1/2 !border-cyan-500/35 !bg-cyan-600`}
           title='sourceHandle="video" — wire to media_process video_url or fal video_url'
+        />
+      </div>
+    </div>
+  );
+}
+
+function VideoKeyframePickerNode({ id, data }: NodeProps) {
+  const { setNodes } = useReactFlow();
+  const d = data as { videoUrl?: string; frameTimesSec?: number[] };
+  const url = (d.videoUrl ?? "").trim();
+  const times = Array.isArray(d.frameTimesSec) ? d.frameTimesSec : [];
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [duration, setDuration] = useState(0);
+
+  const updateData = useCallback(
+    (patch: Partial<{ videoUrl: string; frameTimesSec: number[] }>) => {
+      setNodes((nds) =>
+        nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)),
+      );
+    },
+    [id, setNodes],
+  );
+
+  const addTime = useCallback(
+    (t: number) => {
+      if (!Number.isFinite(t) || t < 0) return;
+      const dur = duration > 0 ? duration : videoRef.current?.duration ?? 0;
+      const cap = dur > 0 ? dur : t;
+      const clamped = Math.max(0, Math.min(cap, t));
+      const rounded = Math.round(clamped * 1000) / 1000;
+      const next = [...times.filter((x) => Math.abs(x - rounded) > 0.001), rounded].sort(
+        (a, b) => a - b,
+      );
+      if (next.length > 24) return;
+      updateData({ frameTimesSec: next });
+    },
+    [duration, times, updateData],
+  );
+
+  const removeAt = (idx: number) => {
+    updateData({ frameTimesSec: times.filter((_, j) => j !== idx) });
+  };
+
+  const showPreview = /^https?:\/\//i.test(url);
+
+  return (
+    <div className="min-w-[240px] max-w-[min(100vw,380px)] rounded-lg border border-teal-500/50 bg-zinc-900/90 px-3 py-2 pr-6 shadow-lg">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-xs font-medium uppercase tracking-wide text-teal-400">Video keyframes</span>
+        <span className="font-mono text-[10px] text-zinc-600">picker</span>
+      </div>
+      <div className="text-xs text-zinc-400">Node {id.slice(0, 8)}…</div>
+      {showPreview ? (
+        <>
+          <video
+            ref={videoRef}
+            src={url}
+            controls
+            playsInline
+            className="mt-2 max-h-28 w-full rounded border border-zinc-700 bg-black"
+            onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
+          />
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              className="rounded bg-teal-900/60 px-2 py-0.5 text-[11px] text-teal-100 hover:bg-teal-800/80"
+              onClick={() => {
+                const v = videoRef.current;
+                if (v) addTime(v.currentTime);
+              }}
+            >
+              Add at playhead
+            </button>
+          </div>
+          <div
+            className="relative mt-1 h-7 w-full cursor-crosshair rounded bg-zinc-800 ring-1 ring-zinc-700"
+            role="slider"
+            aria-label="Click to add keyframe time"
+            onClick={(ev) => {
+              const dur = duration || videoRef.current?.duration || 0;
+              if (dur <= 0) return;
+              const rect = ev.currentTarget.getBoundingClientRect();
+              const x = ev.clientX - rect.left;
+              const r = Math.max(0, Math.min(1, x / rect.width));
+              addTime(r * dur);
+            }}
+          >
+            {duration > 0 &&
+              times.map((t) => (
+                <div
+                  key={`${t}`}
+                  className="pointer-events-none absolute bottom-0 top-0 w-0.5 bg-teal-400"
+                  style={{ left: `${(t / duration) * 100}%` }}
+                  title={`${t.toFixed(2)}s`}
+                />
+              ))}
+          </div>
+        </>
+      ) : (
+        <p className="mt-1 line-clamp-2 text-xs text-zinc-500">{url || "Set video URL in the sidebar"}</p>
+      )}
+      <div className="mt-1 max-h-16 overflow-y-auto text-[10px] text-zinc-500">
+        {times.length === 0 ? (
+          <span>No keyframe times yet — click timeline or use playhead.</span>
+        ) : (
+          <ul className="space-y-0.5">
+            {times.map((t, i) => (
+              <li key={`${t}-${i}`} className="flex items-center justify-between gap-2 font-mono">
+                <span>{t.toFixed(2)}s</span>
+                <button
+                  type="button"
+                  className="text-[10px] text-red-400 hover:underline"
+                  onClick={() => removeAt(i)}
+                >
+                  remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="relative mt-2 flex min-h-[22px] items-center justify-end gap-2">
+        <span className="font-mono text-[10px] text-teal-300">video</span>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="video"
+          className={`${FLOW_HANDLE_BASE} !absolute !right-0 !top-1/2 !-translate-y-1/2 !border-teal-500/35 !bg-teal-600`}
+          title='sourceHandle="video" — wire to extract_keyframes_manual video_url'
         />
       </div>
     </div>
@@ -693,6 +823,7 @@ const MEDIA_PROCESS_OPS = [
   "extract_audio",
   "extract_frames",
   "extract_keyframes",
+  "extract_keyframes_manual",
   "pick_image",
   "segment_scenes",
   "sync_barrier",
@@ -970,6 +1101,7 @@ const nodeTypes = {
   input_prompt: InputPromptNode,
   input_image: InputImageNode,
   input_video: InputVideoNode,
+  video_keyframe_picker: VideoKeyframePickerNode,
   input_group: InputGroupNode,
   media_process: MediaProcessNode,
   review_gate: ReviewGateNode,
@@ -1459,6 +1591,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       | "input_prompt"
       | "input_image"
       | "input_video"
+      | "video_keyframe_picker"
       | "input_group"
       | "media_process"
       | "review_gate"
@@ -1483,7 +1616,9 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
             ? { imageUrl: "" }
             : kind === "input_video"
               ? { videoUrl: "" }
-              : kind === "media_process"
+              : kind === "video_keyframe_picker"
+                ? { videoUrl: "", frameTimesSec: [] as number[] }
+                : kind === "media_process"
                 ? { operation: "extract_audio", params: {} }
                 : kind === "review_gate"
                   ? { text: "" }
@@ -1786,6 +1921,13 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
             </button>
             <button
               type="button"
+              onClick={() => addNode("video_keyframe_picker")}
+              className="rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 ring-1 ring-teal-900/50 hover:bg-zinc-700"
+            >
+              + Video keyframes
+            </button>
+            <button
+              type="button"
               onClick={() => addNode("media_process")}
               className="rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 ring-1 ring-teal-900/50 hover:bg-zinc-700"
             >
@@ -2020,6 +2162,41 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
               onVideoUrlChange={(videoUrl) => updateSelectedData({ videoUrl })}
             />
           )}
+          {selectedNode?.type === "video_keyframe_picker" && (
+            <div className="mt-2 space-y-2">
+              <InputVideoNodeSettings
+                videoUrl={String((selectedNode.data as { videoUrl?: string }).videoUrl ?? "")}
+                onVideoUrlChange={(videoUrl) => updateSelectedData({ videoUrl })}
+              />
+              <label className="text-xs text-zinc-500">Keyframe times (seconds, comma-separated)</label>
+              <input
+                type="text"
+                className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 font-mono text-xs text-zinc-100"
+                placeholder="0, 1.5, 3.2"
+                value={
+                  Array.isArray((selectedNode.data as { frameTimesSec?: number[] }).frameTimesSec)
+                    ? (selectedNode.data as { frameTimesSec?: number[] }).frameTimesSec!.join(", ")
+                    : ""
+                }
+                onChange={(e) => {
+                  const parts = e.target.value
+                    .split(/[,;\s]+/)
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+                  const nums = parts
+                    .map((s) => Number.parseFloat(s))
+                    .filter((n) => Number.isFinite(n))
+                    .slice(0, 24);
+                  updateSelectedData({ frameTimesSec: nums });
+                }}
+              />
+              <p className="text-[11px] leading-snug text-zinc-600">
+                Wire <span className="font-mono">video</span> to a <span className="font-mono">media_process</span> node
+                with operation <span className="font-mono">extract_keyframes_manual</span>. Click the timeline on the
+                canvas to add times, or edit the list here.
+              </p>
+            </div>
+          )}
           {selectedNode?.type === "review_gate" && (
             <div className="mt-2 space-y-2">
               <label className="text-xs text-zinc-500">Caption (fed to downstream fal merge as text)</label>
@@ -2167,6 +2344,56 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
                     One PNG per optical-flow segment (midpoint). Outputs <span className="font-mono">image_urls</span> for{" "}
                     <span className="font-mono">pick_image</span> lanes.
                   </p>
+                </>
+              ) : null}
+              {String((selectedNode.data as { operation?: string }).operation ?? "") === "extract_keyframes_manual" ? (
+                <>
+                  <p className="text-[11px] leading-snug text-zinc-600">
+                    Wire <span className="font-mono">video_url</span> from a{" "}
+                    <span className="font-mono">video_keyframe_picker</span> (recommended) or <span className="font-mono">input_video</span>.
+                    Frame times come from the picker&apos;s list; use the override below only if you are not using a picker.
+                  </p>
+                  <label className="text-xs text-zinc-500">Override frame times (seconds, comma-separated, optional)</label>
+                  <input
+                    type="text"
+                    className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 font-mono text-xs text-zinc-100"
+                    placeholder="leave empty to use Video keyframe picker"
+                    value={
+                      Array.isArray(
+                        (selectedNode.data as { params?: { frameTimesSec?: number[] } }).params?.frameTimesSec,
+                      ) &&
+                      (selectedNode.data as { params?: { frameTimesSec?: number[] } }).params!.frameTimesSec!.length > 0
+                        ? (selectedNode.data as { params?: { frameTimesSec?: number[] } }).params!.frameTimesSec!.join(
+                            ", ",
+                          )
+                        : ""
+                    }
+                    onChange={(e) => {
+                      const raw = e.target.value.trim();
+                      if (!raw) {
+                        updateSelectedData({
+                          params: {
+                            ...((selectedNode.data as { params?: Record<string, unknown> }).params ?? {}),
+                            frameTimesSec: undefined,
+                          },
+                        });
+                        return;
+                      }
+                      const nums = raw
+                        .split(/[,;\s]+/)
+                        .map((s) => s.trim())
+                        .filter(Boolean)
+                        .map((s) => Number.parseFloat(s))
+                        .filter((n) => Number.isFinite(n))
+                        .slice(0, 24);
+                      updateSelectedData({
+                        params: {
+                          ...((selectedNode.data as { params?: Record<string, unknown> }).params ?? {}),
+                          frameTimesSec: nums,
+                        },
+                      });
+                    }}
+                  />
                 </>
               ) : null}
               {String((selectedNode.data as { operation?: string }).operation ?? "") === "pick_image" ? (

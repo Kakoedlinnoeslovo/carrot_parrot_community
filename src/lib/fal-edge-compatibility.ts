@@ -85,6 +85,7 @@ function inferInputNodeSourceKind(
   if (source.type === "review_gate") return "text";
   if (source.type === "input_image") return "image";
   if (source.type === "input_video") return "image";
+  if (source.type === "video_keyframe_picker") return "image";
   if (source.type === "input_group") {
     const slots = source.data.slots ?? [];
     const slot = slots.find((s) => s.id === sourceHandle);

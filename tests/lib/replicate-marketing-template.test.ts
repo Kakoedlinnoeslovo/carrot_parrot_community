@@ -49,6 +49,32 @@ describe("replicate-marketing-template", () => {
     expect(g.edges.some((e) => e.source === "pick_0" && e.target === "nano_0")).toBe(false);
   });
 
+  it("omits speech and OCR from merged prompts when merge options disable them", () => {
+    const analysis: MarketingVideoAnalysis = {
+      durationSec: 10,
+      segments: [
+        { start: 0, end: 5 },
+        { start: 5, end: 10 },
+      ],
+      segmentationMethod: "optical_flow",
+      speechText: "Buy now",
+      ocrText: "SALE",
+      speechFromLocalAsr: true,
+      textFromLocalOcr: true,
+    };
+    const g = buildReplicateWorkflowFromVideoUrl("https://example.com/ad.mp4", analysis, {
+      includeSpeech: false,
+      includeOcr: false,
+    });
+    const prompt = g.nodes.find((n) => n.id === "in_prompt");
+    expect(prompt?.type).toBe("input_prompt");
+    if (prompt?.type === "input_prompt") {
+      expect(prompt.data.prompt).toContain("optical_flow");
+      expect(prompt.data.prompt).not.toContain("Buy now");
+      expect(prompt.data.prompt).not.toContain("SALE");
+    }
+  });
+
   it("merges optional analysis into prompt and fal nodes", () => {
     const analysis: MarketingVideoAnalysis = {
       durationSec: 10,

@@ -19,15 +19,29 @@ const STAGE_X = 420;
 const LANE_Y = 320;
 const Y0 = 100;
 
-function mergeAnalysisIntoGraph(g: WorkflowGraph, analysis: MarketingVideoAnalysis): void {
+/** When merging marketing analysis into prompts, omit speech and/or OCR lines. */
+export type MergeAnalysisOptions = {
+  includeSpeech?: boolean;
+  includeOcr?: boolean;
+};
+
+function mergeAnalysisIntoGraph(
+  g: WorkflowGraph,
+  analysis: MarketingVideoAnalysis,
+  opts?: MergeAnalysisOptions,
+): void {
+  const includeSpeech = opts?.includeSpeech !== false;
+  const includeOcr = opts?.includeOcr !== false;
   const timeline = analysis.segments.map((s) => `${s.start.toFixed(1)}–${s.end.toFixed(1)}s`).join("; ");
   const header = `[${analysis.durationSec.toFixed(1)}s, ${analysis.segments.length} segments, ${analysis.segmentationMethod}]`;
-  const speech = analysis.speechText
-    ? `\nSpoken (local ASR${analysis.speechFromLocalAsr ? "" : " unavailable"}): ${analysis.speechText.slice(0, 1200)}`
-    : "";
-  const ocr = analysis.ocrText
-    ? `\nOn-screen text (OCR${analysis.textFromLocalOcr ? "" : " unavailable"}): ${analysis.ocrText.slice(0, 600)}`
-    : "";
+  const speech =
+    includeSpeech && analysis.speechText
+      ? `\nSpoken (local ASR${analysis.speechFromLocalAsr ? "" : " unavailable"}): ${analysis.speechText.slice(0, 1200)}`
+      : "";
+  const ocr =
+    includeOcr && analysis.ocrText
+      ? `\nOn-screen text (OCR${analysis.textFromLocalOcr ? "" : " unavailable"}): ${analysis.ocrText.slice(0, 600)}`
+      : "";
   const block = `${header}\nTimeline: ${timeline}${speech}${ocr}`;
 
   const promptNode = g.nodes.find((n) => n.id === "in_prompt" && n.type === "input_prompt");
@@ -318,6 +332,7 @@ export function buildMarketingRemixLanesGraph(lanes: number): WorkflowGraph {
 export function buildReplicateWorkflowFromVideoUrl(
   videoUrl: string,
   analysis?: MarketingVideoAnalysis,
+  mergeOpts?: MergeAnalysisOptions,
 ): WorkflowGraph {
   const trimmed = videoUrl.trim();
   if (!/^https?:\/\//i.test(trimmed)) {
@@ -330,7 +345,7 @@ export function buildReplicateWorkflowFromVideoUrl(
   }
   iv.data.videoUrl = trimmed;
   if (analysis) {
-    mergeAnalysisIntoGraph(g, analysis);
+    mergeAnalysisIntoGraph(g, analysis, mergeOpts);
   }
   assertAcyclic(g);
   const parsed = safeParseWorkflowGraph(JSON.stringify(g));

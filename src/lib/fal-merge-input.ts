@@ -111,6 +111,12 @@ function resolveUpstream(
     return { texts: [], urls: ok && raw ? [raw] : [] };
   }
 
+  if (sourceNode.type === "video_keyframe_picker") {
+    const raw = (sourceNode.data.videoUrl ?? "").trim();
+    const ok = /^https?:\/\//i.test(raw);
+    return { texts: [], urls: ok && raw ? [raw] : [] };
+  }
+
   if (sourceNode.type === "media_process") {
     const art = artifacts[edge.source];
     if (!art) return { texts: [], urls: [] };

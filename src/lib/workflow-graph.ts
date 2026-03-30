@@ -50,6 +50,7 @@ export const mediaProcessOperationSchema = z.enum([
   "extract_frames",
   "segment_scenes",
   "extract_keyframes",
+  "extract_keyframes_manual",
   "pick_image",
   "sync_barrier",
   "concat_videos",
@@ -70,6 +71,8 @@ const mediaProcessParamsSchema = z
     index: z.number().optional(),
     /** Max keyframes from optical-flow segments (cap). */
     keyframeMaxSegments: z.number().optional(),
+    /** Explicit seconds for `extract_keyframes_manual` (also read from `video_keyframe_picker` upstream). */
+    frameTimesSec: z.array(z.number()).optional(),
   })
   .optional();
 
@@ -97,6 +100,16 @@ export const workflowNodeSchema = z.discriminatedUnion("type", [
     data: z.object({
       /** Public https URL to video (uploaded or remote) */
       videoUrl: z.string().default(""),
+    }),
+    position: z.object({ x: z.number(), y: z.number() }),
+  }),
+  z.object({
+    id: z.string().min(1),
+    type: z.literal("video_keyframe_picker"),
+    data: z.object({
+      videoUrl: z.string().default(""),
+      /** Seconds to extract as keyframes when wired to `extract_keyframes_manual`. */
+      frameTimesSec: z.array(z.number()).default([]),
     }),
     position: z.object({ x: z.number(), y: z.number() }),
   }),
@@ -197,6 +210,7 @@ function inferLegacyTargetHandle(graph: WorkflowGraph, edge: WorkflowEdge): stri
   if (src.type === "review_gate") return "prompt";
   if (src.type === "input_image") return "image_url";
   if (src.type === "input_video") return "video_url";
+  if (src.type === "video_keyframe_picker") return "video_url";
 
   if (src.type === "input_group") {
     const slots = src.data.slots ?? [];

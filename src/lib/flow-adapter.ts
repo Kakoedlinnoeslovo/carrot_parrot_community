@@ -48,6 +48,17 @@ export function graphToFlow(graph: WorkflowGraph): { nodes: Node[]; edges: Edge[
           data: { videoUrl: n.data.videoUrl },
         };
       }
+      if (n.type === "video_keyframe_picker") {
+        return {
+          id: n.id,
+          type: "video_keyframe_picker",
+          position: n.position,
+          data: {
+            videoUrl: n.data.videoUrl,
+            frameTimesSec: Array.isArray(n.data.frameTimesSec) ? n.data.frameTimesSec : [],
+          },
+        };
+      }
       if (n.type === "review_gate") {
         return {
           id: n.id,
@@ -141,6 +152,18 @@ export function flowToGraph(nodes: Node[], edges: Edge[]): WorkflowGraph {
         data: { videoUrl: d.videoUrl ?? "" },
       };
     }
+    if (n.type === "video_keyframe_picker") {
+      const d = n.data as { videoUrl?: string; frameTimesSec?: number[] };
+      const times = Array.isArray(d.frameTimesSec)
+        ? d.frameTimesSec.filter((x): x is number => typeof x === "number" && Number.isFinite(x))
+        : [];
+      return {
+        id: n.id,
+        type: "video_keyframe_picker" as const,
+        position: n.position,
+        data: { videoUrl: d.videoUrl ?? "", frameTimesSec: times },
+      };
+    }
     if (n.type === "review_gate") {
       const d = n.data as { text?: string };
       return {
@@ -161,6 +184,7 @@ export function flowToGraph(nodes: Node[], edges: Edge[]): WorkflowGraph {
           maxWidth?: number;
           index?: number;
           keyframeMaxSegments?: number;
+          frameTimesSec?: number[];
         };
       };
       const parsed = mediaProcessOperationSchema.safeParse(d.operation);
