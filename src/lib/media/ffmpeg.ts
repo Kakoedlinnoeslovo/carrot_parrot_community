@@ -228,10 +228,11 @@ export const CONCAT_NORMALIZE_MAX_WIDTH = 1280;
 export const CONCAT_NORMALIZE_FPS = 24;
 
 /**
- * Video filter applied per segment before `concat` (scale cap + CFR).
+ * Video filter applied per segment before `concat` (scale cap + square pixels + CFR).
+ * `setsar=1` avoids concat failing on invalid/missing SAR (e.g. `SAR 0:1` on portrait clips).
  * Comma in `min(W,iw)` must be escaped for FFmpeg filter syntax.
  */
-export const CONCAT_NORMALIZE_VF = `scale=w=min(${CONCAT_NORMALIZE_MAX_WIDTH}\\,iw):h=-2,fps=${CONCAT_NORMALIZE_FPS}`;
+export const CONCAT_NORMALIZE_VF = `scale=w=min(${CONCAT_NORMALIZE_MAX_WIDTH}\\,iw):h=-2,setsar=1,fps=${CONCAT_NORMALIZE_FPS}`;
 
 /**
  * Build `-filter_complex` graph for N ≥ 2 inputs: normalize each video stream, then concat (video-only).
@@ -394,9 +395,11 @@ export async function imagesSequenceToMp4(
     "-i",
     pattern,
   ];
-  if (mw != null && mw > 0) {
-    args.push("-vf", `scale=w=min(${mw}\\,iw):h=-2`);
-  }
+  const vf =
+    mw != null && mw > 0
+      ? `scale=w=min(${mw}\\,iw):h=-2,setsar=1`
+      : "setsar=1";
+  args.push("-vf", vf);
   args.push("-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", outPath);
   const r = await runCmd(getFfmpegPath(), args, { timeoutMs: 600_000 });
   if (r.code !== 0) {

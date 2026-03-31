@@ -7,15 +7,15 @@ import {
 } from "@/lib/media/ffmpeg";
 
 describe("concat_videos normalization helpers", () => {
-  it("exports consistent scale + fps vf string", () => {
+  it("exports consistent scale + sar + fps vf string", () => {
     expect(CONCAT_NORMALIZE_VF).toBe(
-      `scale=w=min(${CONCAT_NORMALIZE_MAX_WIDTH}\\,iw):h=-2,fps=${CONCAT_NORMALIZE_FPS}`,
+      `scale=w=min(${CONCAT_NORMALIZE_MAX_WIDTH}\\,iw):h=-2,setsar=1,fps=${CONCAT_NORMALIZE_FPS}`,
     );
   });
 
   it("builds filter_complex for two inputs", () => {
     expect(buildConcatFilterGraph(2)).toBe(
-      "[0:v]scale=w=min(1280\\,iw):h=-2,fps=24[v0];[1:v]scale=w=min(1280\\,iw):h=-2,fps=24[v1];[v0][v1]concat=n=2:v=1:a=0[outv]",
+      "[0:v]scale=w=min(1280\\,iw):h=-2,setsar=1,fps=24[v0];[1:v]scale=w=min(1280\\,iw):h=-2,setsar=1,fps=24[v1];[v0][v1]concat=n=2:v=1:a=0[outv]",
     );
   });
 
