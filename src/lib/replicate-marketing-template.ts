@@ -54,8 +54,9 @@ function mergeAnalysisIntoGraph(
     if (n.type !== "fal_model") continue;
     const id = n.id;
     if (id === "nano1" || id.startsWith("nano_")) {
-      const p = typeof n.data.falInput?.prompt === "string" ? n.data.falInput.prompt : "";
-      n.data.falInput = { ...n.data.falInput, prompt: `${p}\n\n${block}`.slice(0, 8000) };
+      const p = typeof n.data.falInput?.prompt === "string" ? n.data.falInput.prompt.trim() : "";
+      const next = p ? `${p}\n\n${block}` : block;
+      n.data.falInput = { ...n.data.falInput, prompt: next.slice(0, 8000) };
     }
     if (id === "kling1" || id.startsWith("kling_")) {
       const p = typeof n.data.falInput?.prompt === "string" ? n.data.falInput.prompt : "";
@@ -145,12 +146,6 @@ function buildMarketingRemixLanesGraphImpl(
       position: { x: x.inputs, y: Y0 + LANE_Y },
     });
   }
-  nodes.push({
-    id: "in_prompt",
-    type: "input_prompt",
-    data: { prompt: "Cinematic product ad, vertical 9:16, bold text overlays, brand-safe." },
-    position: { x: x.inputs, y: 0 },
-  });
   nodes.push({
     id: "mp_kf",
     type: "media_process",
@@ -254,7 +249,6 @@ function buildMarketingRemixLanesGraphImpl(
       data: {
         falModelId: NANO_T2I,
         falInput: {
-          prompt: "Polished marketing frame, vertical 9:16, on-brand.",
           aspect_ratio: "9:16",
         },
         openapiInputKeys: ["prompt", "aspect_ratio"],
@@ -311,13 +305,6 @@ function buildMarketingRemixLanesGraphImpl(
       source: gateId,
       target: nanoId,
       sourceHandle: "out",
-      targetHandle: "prompt",
-    });
-    edges.push({
-      id: `e_prompt_nano_${i}`,
-      source: "in_prompt",
-      target: nanoId,
-      sourceHandle: "prompt",
       targetHandle: "prompt",
     });
     edges.push({

@@ -78,10 +78,13 @@ describe("replicate-marketing-template", () => {
     expect(nano?.type).toBe("fal_model");
     if (nano?.type === "fal_model") {
       expect(nano.data.falModelId).toBe("fal-ai/nano-banana-2");
+      expect(nano.data.falInput.prompt).toBeUndefined();
     }
     expect(g.nodes.some((n) => n.id === "slide_0")).toBe(true);
     expect(g.nodes.some((n) => n.id.startsWith("kling_"))).toBe(false);
     expect(g.edges.some((e) => e.source === "pick_0" && e.target === "nano_0")).toBe(false);
+    expect(g.nodes.some((n) => n.id === "in_prompt")).toBe(false);
+    expect(g.edges.some((e) => e.target === "nano_0" && e.targetHandle === "prompt")).toBe(true);
   });
 
   it("omits speech and OCR from merged prompts when merge options disable them", () => {
@@ -101,12 +104,12 @@ describe("replicate-marketing-template", () => {
       includeSpeech: false,
       includeOcr: false,
     });
-    const prompt = g.nodes.find((n) => n.id === "in_prompt");
-    expect(prompt?.type).toBe("input_prompt");
-    if (prompt?.type === "input_prompt") {
-      expect(prompt.data.prompt).toContain("optical_flow");
-      expect(prompt.data.prompt).not.toContain("Buy now");
-      expect(prompt.data.prompt).not.toContain("SALE");
+    const nano = g.nodes.find((n) => n.id === "nano_0");
+    expect(nano?.type).toBe("fal_model");
+    if (nano?.type === "fal_model") {
+      expect(String(nano.data.falInput.prompt)).toContain("optical_flow");
+      expect(String(nano.data.falInput.prompt)).not.toContain("Buy now");
+      expect(String(nano.data.falInput.prompt)).not.toContain("SALE");
     }
   });
 
@@ -124,17 +127,15 @@ describe("replicate-marketing-template", () => {
       textFromLocalOcr: true,
     };
     const g = buildReplicateWorkflowFromVideoUrl("https://example.com/ad.mp4", analysis);
-    const prompt = g.nodes.find((n) => n.id === "in_prompt");
-    expect(prompt?.type).toBe("input_prompt");
-    if (prompt?.type === "input_prompt") {
-      expect(prompt.data.prompt).toContain("optical_flow");
-      expect(prompt.data.prompt).toContain("Buy now");
-      expect(prompt.data.prompt).toContain("SALE");
-    }
+    expect(g.nodes.some((n) => n.id === "in_prompt")).toBe(false);
     const nano = g.nodes.find((n) => n.id === "nano_0");
     expect(nano?.type).toBe("fal_model");
     if (nano?.type === "fal_model") {
-      expect(String(nano.data.falInput.prompt)).toContain("0.0–5.0s");
+      const p = String(nano.data.falInput.prompt);
+      expect(p).toContain("optical_flow");
+      expect(p).toContain("Buy now");
+      expect(p).toContain("SALE");
+      expect(p).toContain("0.0–5.0s");
     }
   });
 
