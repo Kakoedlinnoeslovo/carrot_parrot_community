@@ -87,7 +87,7 @@ describe("replicate-marketing-template", () => {
     expect(g.edges.some((e) => e.target === "nano_0" && e.targetHandle === "prompt")).toBe(true);
   });
 
-  it("omits speech and OCR from merged prompts when merge options disable them", () => {
+  it("remix: analysis merge does not set nano static prompt (vision wire only)", () => {
     const analysis: MarketingVideoAnalysis = {
       durationSec: 10,
       segments: [
@@ -107,13 +107,11 @@ describe("replicate-marketing-template", () => {
     const nano = g.nodes.find((n) => n.id === "nano_0");
     expect(nano?.type).toBe("fal_model");
     if (nano?.type === "fal_model") {
-      expect(String(nano.data.falInput.prompt)).toContain("optical_flow");
-      expect(String(nano.data.falInput.prompt)).not.toContain("Buy now");
-      expect(String(nano.data.falInput.prompt)).not.toContain("SALE");
+      expect(nano.data.falInput.prompt).toBeUndefined();
     }
   });
 
-  it("merges optional analysis into prompt and fal nodes", () => {
+  it("remix: full analysis still does not bake timeline into nano falInput", () => {
     const analysis: MarketingVideoAnalysis = {
       durationSec: 10,
       segments: [
@@ -131,11 +129,7 @@ describe("replicate-marketing-template", () => {
     const nano = g.nodes.find((n) => n.id === "nano_0");
     expect(nano?.type).toBe("fal_model");
     if (nano?.type === "fal_model") {
-      const p = String(nano.data.falInput.prompt);
-      expect(p).toContain("optical_flow");
-      expect(p).toContain("Buy now");
-      expect(p).toContain("SALE");
-      expect(p).toContain("0.0–5.0s");
+      expect(nano.data.falInput.prompt).toBeUndefined();
     }
   });
 

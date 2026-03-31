@@ -53,11 +53,6 @@ function mergeAnalysisIntoGraph(
   for (const n of g.nodes) {
     if (n.type !== "fal_model") continue;
     const id = n.id;
-    if (id === "nano1" || id.startsWith("nano_")) {
-      const p = typeof n.data.falInput?.prompt === "string" ? n.data.falInput.prompt.trim() : "";
-      const next = p ? `${p}\n\n${block}` : block;
-      n.data.falInput = { ...n.data.falInput, prompt: next.slice(0, 8000) };
-    }
     if (id === "kling1" || id.startsWith("kling_")) {
       const p = typeof n.data.falInput?.prompt === "string" ? n.data.falInput.prompt : "";
       n.data.falInput = {
