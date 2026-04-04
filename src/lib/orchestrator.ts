@@ -28,7 +28,7 @@ import {
 } from "@/lib/artifact-json";
 import { buildPublishedFeedMetaJsonFromGraphJson } from "@/lib/published-feed-meta";
 import { pickWorkflowCoverFromRunSteps } from "@/lib/workflow-cover-from-run";
-import { collectMediaProcessInputs, runMediaProcessNode } from "@/lib/media-process-runner";
+import { collectMediaProcessInputs, collectOrderedConcatVideoUrls, runMediaProcessNode } from "@/lib/media-process-runner";
 import {
   falInputMeta,
   falLogError,
@@ -754,14 +754,18 @@ export function buildMediaProcessInputsJson(
   artifactByNodeId: Record<string, MergeArtifact | undefined>,
 ): string {
   const inputs = collectMediaProcessInputs(graph, node.id, artifactByNodeId);
-  return JSON.stringify({
+  const base: Record<string, unknown> = {
     operation: node.data.operation,
     params: node.data.params ?? {},
     videoUrl: inputs.videoUrl,
     audioUrl: inputs.audioUrl,
     videoUrls: inputs.videoUrls,
     imageUrls: inputs.imageUrls,
-  });
+  };
+  if (node.data.operation === "concat_videos") {
+    base.concatVideoUrls = collectOrderedConcatVideoUrls(graph, node.id, artifactByNodeId);
+  }
+  return JSON.stringify(base);
 }
 
 /** Run `media_process` nodes whose predecessors have succeeded (may run multiple waves). */

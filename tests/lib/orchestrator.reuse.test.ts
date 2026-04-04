@@ -342,4 +342,82 @@ describe("buildMediaProcessInputsJson", () => {
     });
     expect(json1).not.toBe(json2);
   });
+
+  it("includes concatVideoUrls for concat_videos with video_N handles", () => {
+    const graph: WorkflowGraph = {
+      nodes: [
+        { id: "fal1", type: "fal_model", data: { falModelId: "m1", falInput: {} }, position: { x: 0, y: 0 } },
+        { id: "fal2", type: "fal_model", data: { falModelId: "m2", falInput: {} }, position: { x: 0, y: 100 } },
+        { id: "concat", type: "media_process", data: { operation: "concat_videos" }, position: { x: 200, y: 50 } },
+      ],
+      edges: [
+        { id: "e1", source: "fal1", target: "concat", targetHandle: "video_0" },
+        { id: "e2", source: "fal2", target: "concat", targetHandle: "video_1" },
+      ],
+    };
+    const node = graph.nodes.find((n) => n.id === "concat")! as Extract<
+      (typeof graph.nodes)[number],
+      { type: "media_process" }
+    >;
+    const artifacts: Record<string, MergeArtifact | undefined> = {
+      fal1: { text: undefined, images: [], media: [{ url: "https://cdn.example.com/a.mp4", kind: "video" }] },
+      fal2: { text: undefined, images: [], media: [{ url: "https://cdn.example.com/b.mp4", kind: "video" }] },
+    };
+
+    const result = JSON.parse(buildMediaProcessInputsJson(node, graph, artifacts));
+    expect(result.concatVideoUrls).toEqual([
+      "https://cdn.example.com/a.mp4",
+      "https://cdn.example.com/b.mp4",
+    ]);
+  });
+
+  it("concat_videos fingerprint changes when upstream video URLs change", () => {
+    const graph: WorkflowGraph = {
+      nodes: [
+        { id: "fal1", type: "fal_model", data: { falModelId: "m1", falInput: {} }, position: { x: 0, y: 0 } },
+        { id: "fal2", type: "fal_model", data: { falModelId: "m2", falInput: {} }, position: { x: 0, y: 100 } },
+        { id: "concat", type: "media_process", data: { operation: "concat_videos" }, position: { x: 200, y: 50 } },
+      ],
+      edges: [
+        { id: "e1", source: "fal1", target: "concat", targetHandle: "video_0" },
+        { id: "e2", source: "fal2", target: "concat", targetHandle: "video_1" },
+      ],
+    };
+    const node = graph.nodes.find((n) => n.id === "concat")! as Extract<
+      (typeof graph.nodes)[number],
+      { type: "media_process" }
+    >;
+
+    const json1 = buildMediaProcessInputsJson(node, graph, {
+      fal1: { text: undefined, images: [], media: [{ url: "https://cdn.example.com/old-a.mp4", kind: "video" }] },
+      fal2: { text: undefined, images: [], media: [{ url: "https://cdn.example.com/old-b.mp4", kind: "video" }] },
+    });
+    const json2 = buildMediaProcessInputsJson(node, graph, {
+      fal1: { text: undefined, images: [], media: [{ url: "https://cdn.example.com/new-a.mp4", kind: "video" }] },
+      fal2: { text: undefined, images: [], media: [{ url: "https://cdn.example.com/new-b.mp4", kind: "video" }] },
+    });
+    expect(json1).not.toBe(json2);
+
+    const parsed1 = JSON.parse(json1);
+    const parsed2 = JSON.parse(json2);
+    expect(parsed1.concatVideoUrls).not.toEqual(parsed2.concatVideoUrls);
+  });
+
+  it("does not add concatVideoUrls for non-concat operations", () => {
+    const graph: WorkflowGraph = {
+      nodes: [
+        { id: "vid1", type: "input_video", data: { videoUrl: "" }, position: { x: 0, y: 0 } },
+        { id: "mp1", type: "media_process", data: { operation: "extract_frames", params: { fps: 2 } }, position: { x: 200, y: 0 } },
+      ],
+      edges: [{ id: "e1", source: "vid1", target: "mp1" }],
+    };
+    const node = graph.nodes.find((n) => n.id === "mp1")! as Extract<
+      (typeof graph.nodes)[number],
+      { type: "media_process" }
+    >;
+    const result = JSON.parse(buildMediaProcessInputsJson(node, graph, {
+      vid1: { text: undefined, images: [], media: [{ url: "https://a.com/v.mp4", kind: "video" }] },
+    }));
+    expect(result.concatVideoUrls).toBeUndefined();
+  });
 });
