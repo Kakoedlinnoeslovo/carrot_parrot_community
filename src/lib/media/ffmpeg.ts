@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -11,15 +11,31 @@ const MAX_DOWNLOAD_BYTES = 120 * 1024 * 1024;
 let cachedFfmpegPath: string | undefined;
 let cachedFfprobePath: string | undefined;
 
+/**
+ * Serverless bundles (Vercel, AWS Lambda) often deploy `ffmpeg-static` / `@ffprobe-installer` files without
+ * the Unix execute bit, which makes `spawn` fail with `EACCES`. chmod +x fixes that.
+ */
+function tryChmodPlusX(filePath: string): void {
+  if (process.platform === "win32") return;
+  if (!filePath || filePath === "ffmpeg" || filePath === "ffprobe") return;
+  try {
+    if (existsSync(filePath)) chmodSync(filePath, 0o755);
+  } catch {
+    /* ignore: may be EPERM on system binaries; spawn will still work if already executable */
+  }
+}
+
 /** Prefer FFMPEG_PATH, then npm `ffmpeg-static`, then PATH `ffmpeg`. */
 export function getFfmpegPath(): string {
   if (cachedFfmpegPath) return cachedFfmpegPath;
   const env = process.env.FFMPEG_PATH?.trim();
   if (env && existsSync(env)) {
+    tryChmodPlusX(env);
     cachedFfmpegPath = env;
     return env;
   }
   if (ffmpegStatic != null && ffmpegStatic.length > 0 && existsSync(ffmpegStatic)) {
+    tryChmodPlusX(ffmpegStatic);
     cachedFfmpegPath = ffmpegStatic;
     return ffmpegStatic;
   }
@@ -32,11 +48,13 @@ export function getFfprobePath(): string {
   if (cachedFfprobePath) return cachedFfprobePath;
   const env = process.env.FFPROBE_PATH?.trim();
   if (env && existsSync(env)) {
+    tryChmodPlusX(env);
     cachedFfprobePath = env;
     return env;
   }
   const p = ffprobeInstaller.path;
   if (p && existsSync(p)) {
+    tryChmodPlusX(p);
     cachedFfprobePath = p;
     return p;
   }
