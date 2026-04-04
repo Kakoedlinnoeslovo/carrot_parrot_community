@@ -1,4 +1,5 @@
 import type { FalClient } from "@/lib/fal-client";
+import { falLogError, falLogInfo, isFalLogVerbose } from "@/lib/fal-server-log";
 
 /** fal-hosted workflow pipeline IDs use the `workflows/...` namespace (stream API). */
 export function isFalHostedWorkflowEndpoint(endpointId: string): boolean {
@@ -27,6 +28,11 @@ export type FalHostedWorkflowResult =
   | { ok: true; finalOutput: unknown; events: WorkflowStreamEventSummary[] }
   | { ok: false; error: string };
 
+export type FalHostedWorkflowStreamCtx = {
+  runId?: string;
+  stepId?: string;
+};
+
 /**
  * Runs a fal workflow endpoint via `fal.stream` and collects the final output payload.
  * Used by the orchestrator for `workflows/*` ids; individual models keep using `queue.submit`.
@@ -35,6 +41,7 @@ export async function runFalHostedWorkflowStream(
   fal: FalClient,
   endpointId: string,
   input: Record<string, unknown>,
+  ctx?: FalHostedWorkflowStreamCtx,
 ): Promise<FalHostedWorkflowResult> {
   const events: WorkflowStreamEventSummary[] = [];
   let lastWorkflowError: string | null = null;
@@ -67,11 +74,31 @@ export async function runFalHostedWorkflowStream(
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    falLogError("fal.workflow.stream.exception", {
+      endpointId,
+      ...(ctx?.runId ? { runId: ctx.runId } : {}),
+      ...(ctx?.stepId ? { stepId: ctx.stepId } : {}),
+      error: msg,
+    });
     return { ok: false, error: msg };
   }
 
   if (lastWorkflowError) {
+    falLogError("fal.workflow.stream.workflow_error", {
+      endpointId,
+      ...(ctx?.runId ? { runId: ctx.runId } : {}),
+      ...(ctx?.stepId ? { stepId: ctx.stepId } : {}),
+      error: lastWorkflowError,
+    });
     return { ok: false, error: lastWorkflowError };
+  }
+  if (isFalLogVerbose()) {
+    falLogInfo("fal.workflow.stream.verbose", {
+      endpointId,
+      ...(ctx?.runId ? { runId: ctx.runId } : {}),
+      ...(ctx?.stepId ? { stepId: ctx.stepId } : {}),
+      streamEventCount: events.length,
+    });
   }
   return { ok: true, finalOutput, events };
 }

@@ -21,6 +21,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { falLogError, falLogInfo, isFalLogVerbose } from "@/lib/fal-server-log";
 
 function urlsFromArtifact(art: MergeArtifact | undefined): { videos: string[]; audios: string[]; images: string[] } {
   const videos: string[] = [];
@@ -151,9 +152,36 @@ export function collectOrderedConcatVideoUrls(
   return out;
 }
 
-async function uploadBlob(fal: FalClient, buf: Buffer, contentType: string): Promise<string> {
-  const blob = new Blob([new Uint8Array(buf)], { type: contentType });
-  return fal.storage.upload(blob);
+async function uploadBlob(
+  fal: FalClient,
+  buf: Buffer,
+  contentType: string,
+  label?: string,
+): Promise<string> {
+  const t0 = Date.now();
+  try {
+    const blob = new Blob([new Uint8Array(buf)], { type: contentType });
+    const url = await fal.storage.upload(blob);
+    if (isFalLogVerbose()) {
+      falLogInfo("fal.storage.upload.ok", {
+        contentType,
+        byteLength: buf.length,
+        durationMs: Date.now() - t0,
+        ...(label ? { label } : {}),
+      });
+    }
+    return url;
+  } catch (e) {
+    const err = e instanceof Error ? e.message : String(e);
+    falLogError("fal.storage.upload.error", {
+      contentType,
+      byteLength: buf.length,
+      durationMs: Date.now() - t0,
+      error: err,
+      ...(label ? { label } : {}),
+    });
+    throw e;
+  }
 }
 
 const MANUAL_KEYFRAME_MAX = 24;
@@ -218,7 +246,7 @@ export async function runMediaProcessNode(
         const outMp3 = path.join(workDir, "out.mp3");
         await extractAudioMp3(dl.filePath, outMp3);
         const buf = await readFileBuffer(outMp3);
-        const uploaded = await uploadBlob(fal, buf, "audio/mpeg");
+        const uploaded = await uploadBlob(fal, buf, "audio/mpeg", "extract_audio");
         const media: MediaItem[] = [{ url: uploaded, kind: "audio" }];
         return { images: [], media, text: undefined };
       } finally {
@@ -237,9 +265,10 @@ export async function runMediaProcessNode(
         const paths = await extractFramesPng(dl.filePath, frameDir, fps, maxFrames);
         const media: MediaItem[] = [];
         const images: string[] = [];
-        for (const p of paths) {
+        for (let fi = 0; fi < paths.length; fi++) {
+          const p = paths[fi]!;
           const buf = await readFileBuffer(p);
-          const u = await uploadBlob(fal, buf, "image/png");
+          const u = await uploadBlob(fal, buf, "image/png", `extract_frames:${fi}`);
           images.push(u);
           media.push({ url: u, kind: "image" });
         }
@@ -284,7 +313,7 @@ export async function runMediaProcessNode(
           const png = path.join(frameDir, `kf-${i}.png`);
           await extractFramePngAtSecond(dl.filePath, png, t);
           const buf = await readFileBuffer(png);
-          const u = await uploadBlob(fal, buf, "image/png");
+          const u = await uploadBlob(fal, buf, "image/png", `extract_keyframes:${i}`);
           images.push(u);
           media.push({ url: u, kind: "image" });
         }
@@ -323,7 +352,7 @@ export async function runMediaProcessNode(
           const png = path.join(frameDir, `kf-${i}.png`);
           await extractFramePngAtSecond(dl.filePath, png, t);
           const buf = await readFileBuffer(png);
-          const u = await uploadBlob(fal, buf, "image/png");
+          const u = await uploadBlob(fal, buf, "image/png", `extract_keyframes_manual:${i}`);
           images.push(u);
           media.push({ url: u, kind: "image" });
         }
@@ -368,7 +397,7 @@ export async function runMediaProcessNode(
         const out = path.join(workDir, "concat-out.mp4");
         await concatVideosNormalized(localPaths, out);
         const buf = await readFileBuffer(out);
-        const uploaded = await uploadBlob(fal, buf, "video/mp4");
+        const uploaded = await uploadBlob(fal, buf, "video/mp4", "concat_videos");
         return { images: [], media: [{ url: uploaded, kind: "video" }], text: undefined };
       } finally {
         for (const c of cleanups) {
@@ -399,7 +428,7 @@ export async function runMediaProcessNode(
           maxWidth: maxWidth != null && maxWidth > 0 ? maxWidth : undefined,
         });
         const buf = await readFileBuffer(out);
-        const uploaded = await uploadBlob(fal, buf, "video/mp4");
+        const uploaded = await uploadBlob(fal, buf, "video/mp4", "images_to_video");
         return { images: [], media: [{ url: uploaded, kind: "video" }], text: undefined };
       } finally {
         for (const c of cleanups) {
@@ -433,7 +462,7 @@ export async function runMediaProcessNode(
         const out = path.join(workDir, `mux-${randomUUID()}.mp4`);
         await muxVideoAndAudio(vdl.filePath, adl.filePath, out);
         const buf = await readFileBuffer(out);
-        const uploaded = await uploadBlob(fal, buf, "video/mp4");
+        const uploaded = await uploadBlob(fal, buf, "video/mp4", "mux_audio_video");
         return { images: [], media: [{ url: uploaded, kind: "video" }], text: undefined };
       } finally {
         await vdl.cleanup();

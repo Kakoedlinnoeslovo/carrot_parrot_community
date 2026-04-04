@@ -26,6 +26,13 @@ import {
 import { buildPublishedFeedMetaJsonFromGraphJson } from "@/lib/published-feed-meta";
 import { pickWorkflowCoverFromRunSteps } from "@/lib/workflow-cover-from-run";
 import { runMediaProcessNode } from "@/lib/media-process-runner";
+import {
+  falInputMeta,
+  falLogError,
+  falLogInfo,
+  falLogWarn,
+  isFalLogVerbose,
+} from "@/lib/fal-server-log";
 
 export type { Artifact, MediaItem } from "@/lib/artifact-json";
 
@@ -187,12 +194,29 @@ async function runHostedWorkflowStep(
   const existing = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
   if (!existing || existing.status !== "running") return;
 
-  const result = await runFalHostedWorkflowStream(fal, endpointId, mergedInput);
+  const meta = falInputMeta(mergedInput);
+  const hostedT0 = Date.now();
+  falLogInfo("fal.workflow.step.start", {
+    runId,
+    stepId,
+    endpointId,
+    inputKeys: meta.inputKeys.join(","),
+    inputByteLength: meta.inputByteLength,
+  });
+
+  const result = await runFalHostedWorkflowStream(fal, endpointId, mergedInput, { runId, stepId });
 
   const step = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
   if (!step || step.status === "succeeded") return;
 
   if (!result.ok) {
+    falLogError("fal.workflow.step.fail", {
+      runId,
+      stepId,
+      endpointId,
+      durationMs: Date.now() - hostedT0,
+      error: result.error,
+    });
     await prisma.runStep.update({
       where: { id: stepId },
       data: { status: "failed", error: result.error },
@@ -209,6 +233,13 @@ async function runHostedWorkflowStep(
 
   if (media.length === 0) {
     const err = "Workflow finished but no media URLs were found in the output.";
+    falLogError("fal.workflow.step.fail", {
+      runId,
+      stepId,
+      endpointId,
+      durationMs: Date.now() - hostedT0,
+      error: err,
+    });
     await prisma.runStep.update({
       where: { id: stepId },
       data: { status: "failed", error: err },
@@ -221,6 +252,15 @@ async function runHostedWorkflowStep(
   }
 
   const workflowEvents = result.events.slice(-48);
+
+  falLogInfo("fal.workflow.step.ok", {
+    runId,
+    stepId,
+    endpointId,
+    durationMs: Date.now() - hostedT0,
+    mediaCount: media.length,
+    ...(isFalLogVerbose() ? { streamEventCount: result.events.length } : {}),
+  });
 
   await prisma.runStep.update({
     where: { id: stepId },
@@ -410,6 +450,7 @@ async function pollFalUntilComplete(
   const existing = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
   if (!existing || existing.status === "succeeded" || existing.status === "failed") return;
 
+  const pollT0 = Date.now();
   let lastError: unknown;
   for (let attempt = 0; attempt < POLL_FAL_MAX_ATTEMPTS; attempt++) {
     try {
@@ -436,11 +477,28 @@ async function pollFalUntilComplete(
         },
       });
 
+      falLogInfo("fal.poll.ok", {
+        runId,
+        stepId,
+        endpointId,
+        requestId,
+        durationMs: Date.now() - pollT0,
+        attempt: attempt + 1,
+      });
+
       await continueRunAfterFalOutput(runId);
       return;
     } catch (e) {
       lastError = e;
       if (attempt < POLL_FAL_MAX_ATTEMPTS - 1 && isTransientFalNetworkError(e)) {
+        falLogWarn("fal.poll.retry", {
+          runId,
+          stepId,
+          endpointId,
+          requestId,
+          attempt: attempt + 1,
+          error: formatFalClientError(e),
+        });
         await sleep(400 * (attempt + 1));
         continue;
       }
@@ -449,6 +507,14 @@ async function pollFalUntilComplete(
   }
 
   const msg = formatFalClientError(lastError);
+  falLogError("fal.poll.fail", {
+    runId,
+    stepId,
+    endpointId,
+    requestId,
+    durationMs: Date.now() - pollT0,
+    error: msg,
+  });
   const step = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
   if (step?.status === "succeeded") {
     return;
@@ -839,6 +905,7 @@ export async function scheduleReadyFalSteps(
     const webhookUrl = `${getAppUrl()}/api/webhooks/fal?runId=${encodeURIComponent(runId)}&stepId=${encodeURIComponent(
       step.id,
     )}`;
+    const meta = falInputMeta(mergedInput);
 
     try {
       const queued = await fal!.queue.submit(node.data.falModelId, {
@@ -850,9 +917,26 @@ export async function scheduleReadyFalSteps(
         data: { falRequestId: queued.request_id },
       });
 
+      falLogInfo("fal.queue.submit.ok", {
+        runId,
+        stepId: step.id,
+        endpointId: node.data.falModelId,
+        requestId: queued.request_id,
+        inputKeys: meta.inputKeys.join(","),
+        inputByteLength: meta.inputByteLength,
+      });
+
       void pollFalUntilComplete(fal!, runId, step.id, node.data.falModelId, queued.request_id);
     } catch (e) {
       const msg = formatFalClientError(e);
+      falLogError("fal.queue.submit.error", {
+        runId,
+        stepId: step.id,
+        endpointId: node.data.falModelId,
+        inputKeys: meta.inputKeys.join(","),
+        inputByteLength: meta.inputByteLength,
+        error: msg,
+      });
       await prisma.runStep.update({
         where: { id: step.id },
         data: { status: "failed", error: msg },
@@ -946,9 +1030,16 @@ export async function handleFalWebhook(runId: string, stepId: string, body: unkn
   }
 
   const b = body as Record<string, unknown>;
+  const webhookStatus = typeof b?.status === "string" ? b.status : null;
+  falLogInfo("fal.webhook.received", {
+    runId,
+    stepId,
+    ...(webhookStatus ? { webhookStatus } : {}),
+  });
 
   if (b?.status === "ERROR") {
     const err = String(b.error ?? "fal error");
+    falLogError("fal.webhook.error_status", { runId, stepId, error: err });
     await prisma.runStep.update({
       where: { id: stepId },
       data: {
@@ -981,9 +1072,12 @@ export async function handleFalWebhook(runId: string, stepId: string, body: unkn
   const text = extractTextFromFalData(payload);
 
   if (media.length === 0 && text == null && b?.status !== "OK") {
-    if (process.env.NODE_ENV === "development") {
-      console.warn("[fal webhook] Unrecognized body; keys:", body && typeof body === "object" ? Object.keys(body) : []);
-    }
+    falLogWarn("fal.webhook.unrecognized", {
+      runId,
+      stepId,
+      bodyKeys:
+        body && typeof body === "object" ? Object.keys(body as object).join(",") : "",
+    });
     await prisma.runStep.update({
       where: { id: stepId },
       data: { status: "failed", error: "Unexpected webhook payload (no media URLs)" },
@@ -991,6 +1085,13 @@ export async function handleFalWebhook(runId: string, stepId: string, body: unkn
     await failRun(runId, "Unexpected webhook payload (no media URLs)");
     return;
   }
+
+  falLogInfo("fal.webhook.ok", {
+    runId,
+    stepId,
+    mediaCount: media.length,
+    hasText: text != null,
+  });
 
   await prisma.runStep.update({
     where: { id: stepId },
