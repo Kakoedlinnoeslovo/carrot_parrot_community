@@ -117,4 +117,28 @@ describe("isFalResultNotReadyError", () => {
       ),
     ).toBe(false);
   });
+
+  it("returns true for ApiError 400 when detail says request still in progress", () => {
+    expect(
+      isFalResultNotReadyError(
+        new ApiError({
+          message: "Bad Request",
+          status: 400,
+          body: { detail: "Request is still in progress" },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false for ApiError 400 when detail is something else", () => {
+    expect(
+      isFalResultNotReadyError(
+        new ApiError({
+          message: "Bad Request",
+          status: 400,
+          body: { detail: "Invalid request" },
+        }),
+      ),
+    ).toBe(false);
+  });
 });

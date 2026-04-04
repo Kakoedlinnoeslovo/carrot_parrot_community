@@ -89,12 +89,21 @@ export function isTransientFalNetworkError(e: unknown): boolean {
 /**
  * True when `queue.result` failed because the job output is not available yet.
  * Do not treat 422 (ValidationError) as not-ready — that is invalid input.
+ *
+ * fal sometimes returns **400** with `detail: "Request is still in progress"` if `result` is
+ * fetched before the queue entry is ready (race with submit / slow runners).
  */
 export function isFalResultNotReadyError(e: unknown): boolean {
   if (e instanceof ValidationError) return false;
   if (!(e instanceof ApiError)) return false;
   const s = e.status;
   if (s === 404 || s === 202 || s === 425) return true;
+  if (s === 400) {
+    const d = e.body?.detail;
+    if (typeof d === "string" && /still in progress/i.test(d)) return true;
+    const msg = e.message.toLowerCase();
+    if (msg.includes("still in progress")) return true;
+  }
   return false;
 }
 
