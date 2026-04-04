@@ -132,6 +132,8 @@ model RunStep {
   inputsJson    String?
   outputsJson   String?
   error         String?
+  /// True when outputs were copied from a prior run (step was skipped).
+  reused        Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

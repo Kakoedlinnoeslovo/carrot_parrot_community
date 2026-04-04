@@ -19,7 +19,7 @@ import {
   type MergeArtifact,
 } from "@/lib/fal-merge-input";
 import { missingWiredRasterInputsMessage } from "@/lib/fal-preflight";
-import { canReuseFalStepFromPrevious } from "@/lib/fal-step-reuse";
+import { canReuseFalStepFromPrevious, canReuseStepFromPrevious } from "@/lib/fal-step-reuse";
 import type { RunStep as PrismaRunStep } from "@prisma/client";
 import {
   type Artifact,
@@ -28,7 +28,7 @@ import {
 } from "@/lib/artifact-json";
 import { buildPublishedFeedMetaJsonFromGraphJson } from "@/lib/published-feed-meta";
 import { pickWorkflowCoverFromRunSteps } from "@/lib/workflow-cover-from-run";
-import { runMediaProcessNode } from "@/lib/media-process-runner";
+import { collectMediaProcessInputs, runMediaProcessNode } from "@/lib/media-process-runner";
 import {
   falInputMeta,
   falLogError,
@@ -740,6 +740,26 @@ export async function processRun(runId: string) {
   await finalizeRunIfDone(runId);
 }
 
+/**
+ * Build a deterministic JSON payload capturing a `media_process` node's effective inputs:
+ * operation, params, and upstream media URLs. Changes to any of these invalidate reuse.
+ */
+export function buildMediaProcessInputsJson(
+  node: Extract<import("@/lib/workflow-graph").WorkflowNode, { type: "media_process" }>,
+  graph: WorkflowGraph,
+  artifactByNodeId: Record<string, MergeArtifact | undefined>,
+): string {
+  const inputs = collectMediaProcessInputs(graph, node.id, artifactByNodeId);
+  return JSON.stringify({
+    operation: node.data.operation,
+    params: node.data.params ?? {},
+    videoUrl: inputs.videoUrl,
+    audioUrl: inputs.audioUrl,
+    videoUrls: inputs.videoUrls,
+    imageUrls: inputs.imageUrls,
+  });
+}
+
 /** Run `media_process` nodes whose predecessors have succeeded (may run multiple waves). */
 export async function scheduleReadyMediaProcessSteps(
   runId: string,
@@ -759,8 +779,10 @@ export async function scheduleReadyMediaProcessSteps(
     return;
   }
 
+  const reuseMap = await loadReuseReferenceStepsByNodeId(runId);
+
   for (;;) {
-    const steps = await prisma.runStep.findMany({ where: { runId } });
+    let steps = await prisma.runStep.findMany({ where: { runId } });
     const byNode = Object.fromEntries(steps.map((s) => [s.nodeId, s]));
     const failed = steps.some((s) => s.status === "failed");
     if (failed) return;
@@ -775,16 +797,49 @@ export async function scheduleReadyMediaProcessSteps(
 
     if (ready.length === 0) break;
 
+    // --- Reuse pass: skip media_process steps whose inputs haven't changed ---
+    if (reuseMap) {
+      let anyReused = false;
+      for (const node of ready) {
+        if (node.type !== "media_process") continue;
+        const step = byNode[node.id]!;
+        const artifactMap: Record<string, MergeArtifact | undefined> = Object.fromEntries(
+          steps.map((s) => [s.nodeId, parseArtifactJson(s.outputsJson) as MergeArtifact]),
+        );
+        const inputsJson = buildMediaProcessInputsJson(node, graph, artifactMap);
+        const prev = reuseMap[node.id];
+        if (canReuseStepFromPrevious(prev, inputsJson)) {
+          await prisma.runStep.update({
+            where: { id: step.id },
+            data: {
+              status: "succeeded",
+              inputsJson,
+              outputsJson: prev!.outputsJson,
+              reused: true,
+              error: null,
+            },
+          });
+          anyReused = true;
+        }
+      }
+      if (anyReused) {
+        // Re-fetch steps so next iteration sees reused steps as succeeded.
+        continue;
+      }
+    }
+
     await Promise.all(
       ready.map(async (node) => {
         if (node.type !== "media_process") return;
         const step = byNode[node.id]!;
-        await prisma.runStep.update({ where: { id: step.id }, data: { status: "running" } });
+        if (step.status !== "pending") return;
+        const latest = await prisma.runStep.findMany({ where: { runId } });
+        const artifactByNodeId: Record<string, MergeArtifact | undefined> = Object.fromEntries(
+          latest.map((s) => [s.nodeId, parseArtifactJson(s.outputsJson) as MergeArtifact]),
+        );
+        const inputsJson = buildMediaProcessInputsJson(node, graph, artifactByNodeId);
+        await prisma.runStep.update({ where: { id: step.id }, data: { status: "running", inputsJson } });
         try {
-          const latest = await prisma.runStep.findMany({ where: { runId } });
-          const artifactByNodeId: Record<string, MergeArtifact | undefined> = Object.fromEntries(
-            latest.map((s) => [s.nodeId, parseArtifactJson(s.outputsJson) as MergeArtifact]),
-          );
           const artifact = await runMediaProcessNode(node, graph, artifactByNodeId, fal);
           await prisma.runStep.update({
             where: { id: step.id },
@@ -876,6 +931,7 @@ export async function scheduleReadyFalSteps(
               status: "succeeded",
               inputsJson,
               outputsJson: prev!.outputsJson,
+              reused: true,
               error: null,
             },
           });
@@ -886,6 +942,7 @@ export async function scheduleReadyFalSteps(
               status: "succeeded",
               inputsJson,
               outputsJson: prev!.outputsJson,
+              reused: true,
               error: null,
             };
           }

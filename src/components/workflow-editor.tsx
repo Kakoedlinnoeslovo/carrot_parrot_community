@@ -32,7 +32,7 @@ import { FAL_WORKFLOW_TEMPLATES } from "@/lib/fal-workflow-templates";
 import { FalModelForm } from "@/components/fal-model-form";
 import type { RJSFSchema } from "@rjsf/utils";
 import { computePrimaryImageInputKey } from "@/lib/fal-openapi-wiring";
-import { listMappableInputKeysFromSchema, listMappableOutputKeysFromSchema } from "@/lib/fal-schema-handles";
+import { listMappableInputKeysFromSchema, listMappableOutputKeysFromSchema, listRequiredInputKeys, listOptionalInputKeys } from "@/lib/fal-schema-handles";
 import { AnalyticsEvent, track } from "@/lib/analytics";
 import { parseArtifactJson } from "@/lib/artifact-json";
 
@@ -442,10 +442,11 @@ function ReviewGateNode({ id, data }: NodeProps) {
 const CONCAT_VIDEO_SLOT_COUNT = 8;
 
 function MediaProcessNode({ id, data }: NodeProps) {
-  const d = data as { operation?: string; previewItems?: RunOutputItem[]; _runStepStatus?: string };
+  const d = data as { operation?: string; previewItems?: RunOutputItem[]; _runStepStatus?: string; _runStepReused?: boolean };
   const stepStatus = d._runStepStatus;
   const isRunning = stepStatus === "running";
   const isQueued = stepStatus === "pending";
+  const isReused = d._runStepReused === true && stepStatus === "succeeded";
   const op = d.operation ?? "extract_audio";
   const items = d.previewItems ?? [];
   const imageItems = items.filter((x) => x.kind === "image" || x.kind === "unknown");
@@ -459,7 +460,9 @@ function MediaProcessNode({ id, data }: NodeProps) {
           ? "border-orange-400/95 ring-2 ring-orange-400/75 animate-pulse shadow-[0_0_22px_rgba(251,146,60,0.22)]"
           : isQueued
             ? "border-amber-900/80 ring-1 ring-amber-700/40"
-            : "border-teal-500/45"
+            : isReused
+              ? "border-sky-500/60 ring-1 ring-sky-400/30"
+              : "border-teal-500/45"
       }`}
     >
       {isRunning ? (
@@ -469,6 +472,10 @@ function MediaProcessNode({ id, data }: NodeProps) {
       ) : isQueued ? (
         <div className="absolute -right-1 -top-2 z-10 rounded-md bg-zinc-700 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-200 shadow-md">
           Queued
+        </div>
+      ) : isReused ? (
+        <div className="absolute -right-1 -top-2 z-10 rounded-md bg-sky-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow-md">
+          Cached
         </div>
       ) : null}
       <div className="mb-1 text-xs font-medium uppercase tracking-wide text-teal-400">Media process</div>
@@ -1021,19 +1028,23 @@ function FalModelNode({ id, data }: NodeProps) {
     falModelId?: string;
     falInput?: Record<string, unknown>;
     _inputHandleKeys?: string[];
+    _optionalInputKeys?: string[];
     _runStepStatus?: string;
     _runStepError?: string;
+    _runStepReused?: boolean;
   };
   const stepStatus = d._runStepStatus;
   const stepErr = typeof d._runStepError === "string" ? d._runStepError.trim() : "";
   const isRunning = stepStatus === "running";
   const isQueued = stepStatus === "pending";
   const isFailed = stepStatus === "failed" || Boolean(stepErr);
+  const isReused = d._runStepReused === true && stepStatus === "succeeded";
   const preview =
     typeof d.falInput?.prompt === "string"
       ? d.falInput.prompt
       : JSON.stringify(d.falInput ?? {}).slice(0, 120);
   const inputKeys = d._inputHandleKeys ?? [];
+  const optionalKeys = d._optionalInputKeys ?? [];
   const outputKeys = [...FAL_OUTPUT_HANDLES];
   const rowClass = "relative flex min-h-[22px] w-full items-center gap-0";
   const handleOffset = "left-[-1px]";
@@ -1046,7 +1057,9 @@ function FalModelNode({ id, data }: NodeProps) {
             ? "border-orange-400/95 ring-2 ring-orange-400/75 animate-pulse shadow-[0_0_22px_rgba(251,146,60,0.22)]"
             : isQueued
               ? "border-amber-900/80 ring-1 ring-amber-700/40"
-              : "border-zinc-600"
+              : isReused
+                ? "border-sky-500/60 ring-1 ring-sky-400/30"
+                : "border-zinc-600"
       }`}
     >
       {isFailed ? (
@@ -1060,6 +1073,10 @@ function FalModelNode({ id, data }: NodeProps) {
       ) : isQueued ? (
         <div className="absolute -right-1 -top-2 z-10 rounded-md bg-zinc-700 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-200 shadow-md">
           Queued
+        </div>
+      ) : isReused ? (
+        <div className="absolute -right-1 -top-2 z-10 rounded-md bg-sky-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow-md">
+          Cached
         </div>
       ) : null}
       <div className="mb-2 border-b border-zinc-800 pb-2">
@@ -1078,7 +1095,7 @@ function FalModelNode({ id, data }: NodeProps) {
       <div className="flex gap-2 border-t border-zinc-800 pt-2">
         <div className="min-w-0 flex-1">
           <div className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-zinc-500">
-            Inputs (API field name = wire target)
+            Required inputs
           </div>
           <div className="flex flex-col gap-0.5">
             {inputKeys.map((key) => (
@@ -1095,11 +1112,19 @@ function FalModelNode({ id, data }: NodeProps) {
             ))}
             {inputKeys.length === 0 ? (
               <p className="pl-4 text-[9px] leading-snug text-zinc-600">
-                No OpenAPI input schema yet. Set fields in the sidebar or connect upstream nodes to named
-                inputs.
+                No required inputs. Set fields in the sidebar or connect upstream nodes.
               </p>
             ) : null}
           </div>
+          {optionalKeys.length > 0 ? (
+            <div className="mt-2 border-t border-zinc-800/60 pt-1.5">
+              <p className="text-[9px] leading-snug text-zinc-500">
+                <span className="font-semibold text-zinc-400">{optionalKeys.length}</span>{" "}
+                optional setting{optionalKeys.length !== 1 ? "s" : ""}{" "}
+                <span className="text-zinc-600">(double-click to edit)</span>
+              </p>
+            </div>
+          ) : null}
         </div>
 
         <div className="min-w-0 flex-1 border-l border-zinc-800 pl-2">
@@ -1276,6 +1301,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showOptionalSection, setShowOptionalSection] = useState(false);
   const [wfTitle, setWfTitle] = useState(title);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [runId, setRunId] = useState<string | null>(null);
@@ -1298,6 +1324,8 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
   const [runStepByNodeId, setRunStepByNodeId] = useState<Record<string, string>>({});
   /** Per-node fal step error message (validation / API) when a step fails. */
   const [runStepErrorByNodeId, setRunStepErrorByNodeId] = useState<Record<string, string>>({});
+  /** Per-node reused flag — true when outputs were copied from a prior run. */
+  const [runStepReusedByNodeId, setRunStepReusedByNodeId] = useState<Record<string, boolean>>({});
   const [runStartedAtIso, setRunStartedAtIso] = useState<string | null>(null);
   const [runClock, setRunClock] = useState(0);
 
@@ -1409,11 +1437,13 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       if (n.type === "media_process") {
         const items = artifactPreviewByNodeId[n.id];
         const stepSt = runShowsStepOverlay ? runStepByNodeId[n.id] : undefined;
+        const stepReused = runStepReusedByNodeId[n.id] ?? false;
         return {
           ...n,
           data: {
             ...(n.data as Record<string, unknown>),
             ...(stepSt ? { _runStepStatus: stepSt } : {}),
+            ...(stepReused ? { _runStepReused: true } : {}),
             ...(items?.length ? { previewItems: items } : {}),
           },
         };
@@ -1421,19 +1451,24 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       if (n.type === "fal_model") {
         const mid = String((n.data as { falModelId?: string }).falModelId ?? "").trim();
         const detail = mid ? detailByEndpoint[mid] : undefined;
-        const inputKeys = listMappableInputKeysFromSchema(detail?.input ?? null);
+        const schema = detail?.input ?? null;
+        const inputKeys = listRequiredInputKeys(schema);
+        const optionalKeys = listOptionalInputKeys(schema);
         const rawSt = runStepByNodeId[n.id];
         const stepErr = runStepErrorByNodeId[n.id]?.trim();
         const showStepUi =
           runShowsStepOverlay || rawSt === "failed" || Boolean(stepErr);
         const stepSt = showStepUi && rawSt ? rawSt : undefined;
+        const stepReused = runStepReusedByNodeId[n.id] ?? false;
         return {
           ...n,
           data: {
             ...(n.data as Record<string, unknown>),
             _inputHandleKeys: inputKeys,
+            _optionalInputKeys: optionalKeys,
             ...(stepSt ? { _runStepStatus: stepSt } : {}),
             ...(stepErr ? { _runStepError: stepErr } : {}),
+            ...(stepReused ? { _runStepReused: true } : {}),
           },
         };
       }
@@ -1450,7 +1485,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       }
       return n;
     });
-  }, [nodes, artifactPreviewByNodeId, stepArtifactTextByNodeId, detailByEndpoint, runShowsStepOverlay, runStepByNodeId, runStepErrorByNodeId]);
+  }, [nodes, artifactPreviewByNodeId, stepArtifactTextByNodeId, detailByEndpoint, runShowsStepOverlay, runStepByNodeId, runStepErrorByNodeId, runStepReusedByNodeId]);
 
   const selectedNode = nodes.find((n) => n.id === selectedId) ?? null;
 
@@ -1579,6 +1614,15 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       selectedNode?.type === "fal_model" &&
       !(selectedFalModelId in detailByEndpoint),
   );
+
+  const wiredInputKeys = useMemo(() => {
+    if (!selectedId || selectedNode?.type !== "fal_model") return new Set<string>();
+    return new Set(
+      edges
+        .filter((e) => e.target === selectedId && e.targetHandle && e.targetHandle.trim() !== "" && e.targetHandle !== "in")
+        .map((e) => e.targetHandle as string),
+    );
+  }, [selectedId, selectedNode?.type, edges]);
   const detailError =
     selectedFalModelId && selectedNode?.type === "fal_model"
       ? detailErrors[selectedFalModelId] ?? null
@@ -1762,6 +1806,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
             status?: string;
             outputsJson?: string | null;
             error?: string | null;
+            reused?: boolean;
           }[];
         };
       };
@@ -1771,12 +1816,15 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       const steps = data.run.steps ?? [];
       const stepStatusMap: Record<string, string> = {};
       const stepErrorMap: Record<string, string> = {};
+      const stepReusedMap: Record<string, boolean> = {};
       for (const s of steps) {
         if (s.nodeId && s.status) stepStatusMap[s.nodeId] = s.status;
         if (s.nodeId && s.error?.trim()) stepErrorMap[s.nodeId] = s.error.trim();
+        if (s.nodeId && s.reused) stepReusedMap[s.nodeId] = true;
       }
       setRunStepByNodeId(stepStatusMap);
       setRunStepErrorByNodeId(stepErrorMap);
+      setRunStepReusedByNodeId(stepReusedMap);
       const byNode: Record<string, RunOutputItem[]> = {};
       const textByNode: Record<string, string> = {};
       for (const s of steps) {
@@ -1851,6 +1899,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
     setRunError(null);
     setRunStepByNodeId({});
     setRunStepErrorByNodeId({});
+    setRunStepReusedByNodeId({});
     setRunStartedAtIso(null);
     setRunClock(0);
     setRunStatus("pending");
@@ -1972,6 +2021,14 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
           deleteKeyCode={["Backspace", "Delete"]}
           onNodeClick={(_, n) => {
             setSelectedId(n.id);
+            setShowOptionalSection(false);
+            setNodes((nds) =>
+              nds.map((node) => ({ ...node, selected: node.id === n.id })),
+            );
+          }}
+          onNodeDoubleClick={(_, n) => {
+            setSelectedId(n.id);
+            setShowOptionalSection(true);
             setNodes((nds) =>
               nds.map((node) => ({ ...node, selected: node.id === n.id })),
             );
@@ -1984,6 +2041,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
           }}
           onPaneClick={() => {
             setSelectedId(null);
+            setShowOptionalSection(false);
             setNodes((nds) => nds.map((node) => ({ ...node, selected: false })));
           }}
           onNodesDelete={(deleted) => {
@@ -2767,16 +2825,57 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
 
               <div>
                 <label className="text-xs text-zinc-500">Model input</label>
-                <FalModelForm
-                  key={`${selectedId}-${selectedFalModelId}`}
-                  schema={detailSchema}
-                  formData={
-                    ((selectedNode.data as { falInput?: Record<string, unknown> }).falInput ??
-                      {}) as Record<string, unknown>
-                  }
-                  onChange={setFalInput}
-                  noSchemaFallback={useJsonWithoutOpenApi ? "json" : "message"}
-                />
+                {(() => {
+                  const reqKeys = listRequiredInputKeys(detailSchema);
+                  const optKeys = listOptionalInputKeys(detailSchema);
+                  const hasWiredFields = reqKeys.some((k) => wiredInputKeys.has(k));
+                  return (
+                    <>
+                      {hasWiredFields && reqKeys.length > 0 ? (
+                        <div className="mb-2 rounded border border-zinc-800 bg-zinc-900/60 px-2 py-1.5">
+                          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                            Wired required fields
+                          </p>
+                          {reqKeys.filter((k) => wiredInputKeys.has(k)).map((k) => (
+                            <p key={k} className="text-[10px] text-zinc-400">
+                              <span className="font-mono text-amber-300">{k}</span>
+                              <span className="ml-1 text-zinc-600">— value from wire (overrides internal)</span>
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+                      <FalModelForm
+                        key={`${selectedId}-${selectedFalModelId}`}
+                        schema={detailSchema}
+                        formData={
+                          ((selectedNode.data as { falInput?: Record<string, unknown> }).falInput ??
+                            {}) as Record<string, unknown>
+                        }
+                        onChange={setFalInput}
+                        noSchemaFallback={useJsonWithoutOpenApi ? "json" : "message"}
+                      />
+                      {optKeys.length > 0 && !showOptionalSection ? (
+                        <button
+                          type="button"
+                          className="mt-2 w-full rounded border border-zinc-800 bg-zinc-900/60 px-2 py-1.5 text-left text-[10px] text-zinc-500 hover:border-zinc-700 hover:text-zinc-400"
+                          onClick={() => setShowOptionalSection(true)}
+                        >
+                          Show {optKeys.length} optional setting{optKeys.length !== 1 ? "s" : ""}
+                        </button>
+                      ) : null}
+                      {optKeys.length > 0 && showOptionalSection ? (
+                        <div className="mt-2 border-t border-zinc-800 pt-2">
+                          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                            Optional settings
+                          </p>
+                          <p className="mb-2 text-[9px] text-zinc-600">
+                            {optKeys.map((k) => k).join(", ")}
+                          </p>
+                        </div>
+                      ) : null}
+                    </>
+                  );
+                })()}
               </div>
             </div>
           )}

@@ -135,6 +135,35 @@ export async function ffprobeDurationSeconds(videoUrlOrPath: string): Promise<nu
   return n;
 }
 
+/** Probe a local video file for its pixel dimensions. */
+export async function ffprobeVideoSize(filePath: string): Promise<{ width: number; height: number }> {
+  const r = await runCmd(
+    getFfprobePath(),
+    [
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=width,height",
+      "-of",
+      "csv=s=x:p=0",
+      filePath,
+    ],
+    { timeoutMs: 60_000 },
+  );
+  if (r.code !== 0) {
+    throw new Error(`ffprobe size failed: ${r.stderr.slice(0, 400)}`);
+  }
+  const parts = r.stdout.trim().split("x");
+  const width = parseInt(parts[0] ?? "", 10);
+  const height = parseInt(parts[1] ?? "", 10);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error(`Could not read video dimensions from ffprobe output: "${r.stdout.trim()}"`);
+  }
+  return { width, height };
+}
+
 /**
  * Download remote URL to a temp file (size-capped).
  */
@@ -254,24 +283,44 @@ export const CONCAT_NORMALIZE_VF = `scale=w=min(${CONCAT_NORMALIZE_MAX_WIDTH}\\,
 
 /**
  * Build `-filter_complex` graph for N ≥ 2 inputs: normalize each video stream, then concat (video-only).
+ *
+ * When `targetW`/`targetH` are provided every input is scaled+padded to that exact
+ * resolution so the concat filter never fails on mismatched dimensions.
+ * Falls back to the legacy `CONCAT_NORMALIZE_VF` (width-cap only) when omitted.
+ *
  * @internal Exported for tests.
  */
-export function buildConcatFilterGraph(inputCount: number): string {
+export function buildConcatFilterGraph(
+  inputCount: number,
+  targetW?: number,
+  targetH?: number,
+): string {
   if (inputCount < 2) {
     throw new Error("buildConcatFilterGraph: inputCount must be >= 2");
   }
+  const vf =
+    targetW && targetH
+      ? `scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease,pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${CONCAT_NORMALIZE_FPS}`
+      : CONCAT_NORMALIZE_VF;
   const parts: string[] = [];
   for (let i = 0; i < inputCount; i++) {
-    parts.push(`[${i}:v]${CONCAT_NORMALIZE_VF}[v${i}]`);
+    parts.push(`[${i}:v]${vf}[v${i}]`);
   }
   const concatInputs = Array.from({ length: inputCount }, (_, i) => `[v${i}]`).join("");
   return `${parts.join(";")};${concatInputs}concat=n=${inputCount}:v=1:a=0[outv]`;
 }
 
+/** Round up to the nearest even number (required for H.264 / yuv420p). */
+function roundEven(v: number): number {
+  return Math.ceil(v / 2) * 2;
+}
+
 /**
  * Concatenate multiple video files with **re-encode** (not stream copy). Decodes each segment,
- * normalizes resolution (max width) and frame rate, strips audio, then encodes H.264 + yuv420p.
- * Use this when inputs may differ in codec params, FPS, resolution, or audio presence (e.g. fal I2V + `images_to_video`).
+ * normalizes resolution and frame rate, strips audio, then encodes H.264 + yuv420p.
+ *
+ * All inputs are probed with ffprobe and scaled+padded to a uniform canvas so the
+ * concat filter never fails on mismatched dimensions (common with Kling / fal I2V outputs).
  */
 export async function concatVideosNormalized(filePaths: string[], outPath: string): Promise<void> {
   const n = filePaths.length;
@@ -304,13 +353,22 @@ export async function concatVideosNormalized(filePaths: string[], outPath: strin
     return;
   }
 
+  const sizes = await Promise.all(filePaths.map((p) => ffprobeVideoSize(p)));
+  const maxW = Math.min(
+    Math.max(...sizes.map((s) => s.width)),
+    CONCAT_NORMALIZE_MAX_WIDTH,
+  );
+  const maxH = Math.max(...sizes.map((s) => s.height));
+  const targetW = roundEven(maxW);
+  const targetH = roundEven(maxH);
+
   const args: string[] = ["-y"];
   for (const p of filePaths) {
     args.push("-i", p);
   }
   args.push(
     "-filter_complex",
-    buildConcatFilterGraph(n),
+    buildConcatFilterGraph(n, targetW, targetH),
     "-map",
     "[outv]",
     "-an",

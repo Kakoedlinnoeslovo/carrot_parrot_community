@@ -201,11 +201,7 @@ function assignExplicitTarget(
   if (keyExpectsText(key)) {
     const t = texts.join("\n");
     if (t) {
-      if (typeof input[key] === "string" && String(input[key]).trim()) {
-        input[key] = `${t}\n${input[key]}`;
-      } else {
-        input[key] = t;
-      }
+      input[key] = t;
     }
     return;
   }

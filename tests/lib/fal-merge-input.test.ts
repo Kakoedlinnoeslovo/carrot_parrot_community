@@ -369,6 +369,34 @@ describe("mergeFalInput", () => {
     ]);
   });
 
+  it("wire overrides internal prompt value (no concatenation)", () => {
+    const g = graph(
+      [{ id: "e1", source: "p1", target: "m1", sourceHandle: "prompt", targetHandle: "prompt" }],
+      { prompt: "internal default" },
+      "from wire",
+    );
+    const out = mergeFalInput(g.nodes[1] as Extract<(typeof g.nodes)[1], { type: "fal_model" }>, g, {
+      p1: { text: "unused", images: [] },
+    });
+    expect(out.prompt).toBe("from wire");
+  });
+
+  it("internal prompt is kept when no wire is connected", () => {
+    const g: WorkflowGraph = {
+      nodes: [
+        {
+          id: "m1",
+          type: "fal_model",
+          data: { falModelId: "fal-ai/flux/schnell", falInput: { prompt: "my internal prompt" } },
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [],
+    };
+    const out = mergeFalInput(g.nodes[0] as Extract<(typeof g.nodes)[0], { type: "fal_model" }>, g, {});
+    expect(out.prompt).toBe("my internal prompt");
+  });
+
   it("merges image + audio wires for Kling AI Avatar (typical lip-sync graph)", () => {
     const g: WorkflowGraph = {
       nodes: [

@@ -42,8 +42,8 @@ vi.mock("@/lib/fal-hosted-workflow", () => ({
 import { prisma } from "@/lib/db";
 import { DEFAULT_WORKFLOW_GRAPH } from "@/lib/default-graph";
 import { mergeFalInput, sanitizeFalInput, type MergeArtifact } from "@/lib/fal-merge-input";
-import { parseWorkflowGraph } from "@/lib/workflow-graph";
-import { loadReuseReferenceStepsByNodeId, scheduleReadyFalSteps } from "@/lib/orchestrator";
+import { parseWorkflowGraph, type WorkflowGraph } from "@/lib/workflow-graph";
+import { loadReuseReferenceStepsByNodeId, scheduleReadyFalSteps, buildMediaProcessInputsJson } from "@/lib/orchestrator";
 
 describe("loadReuseReferenceStepsByNodeId", () => {
   it("returns null when skipStepReuse is true", async () => {
@@ -124,6 +124,7 @@ describe("scheduleReadyFalSteps reuse", () => {
     }),
     falRequestId: null,
     error: null,
+    reused: false,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -140,6 +141,7 @@ describe("scheduleReadyFalSteps reuse", () => {
         outputsJson: JSON.stringify({ text: inNode.data.prompt, images: [] }),
         falRequestId: null,
         error: null,
+        reused: false,
         createdAt: new Date(),
         updatedAt: new Date(),
       },
@@ -152,6 +154,7 @@ describe("scheduleReadyFalSteps reuse", () => {
         outputsJson: null,
         falRequestId: null,
         error: null,
+        reused: false,
         createdAt: new Date(),
         updatedAt: new Date(),
       },
@@ -221,6 +224,7 @@ describe("scheduleReadyFalSteps reuse", () => {
         data: expect.objectContaining({
           status: "succeeded",
           outputsJson: prevG1Step.outputsJson,
+          reused: true,
         }),
       }),
     );
@@ -266,5 +270,76 @@ describe("scheduleReadyFalSteps reuse", () => {
     await scheduleReadyFalSteps("run-new", graph, falMockCtx.mockFal as unknown as FalClient);
 
     expect(falMockCtx.submit).toHaveBeenCalled();
+  });
+});
+
+describe("buildMediaProcessInputsJson", () => {
+  it("captures operation, params, and upstream media URLs", () => {
+    const graph: WorkflowGraph = {
+      nodes: [
+        {
+          id: "vid1",
+          type: "input_video",
+          data: { videoUrl: "https://example.com/v.mp4" },
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "mp1",
+          type: "media_process",
+          data: { operation: "extract_frames", params: { fps: 2, maxFrames: 4 } },
+          position: { x: 200, y: 0 },
+        },
+      ],
+      edges: [{ id: "e1", source: "vid1", target: "mp1" }],
+    };
+    const node = graph.nodes.find((n) => n.id === "mp1")! as Extract<
+      (typeof graph.nodes)[number],
+      { type: "media_process" }
+    >;
+    const artifacts: Record<string, MergeArtifact | undefined> = {
+      vid1: {
+        text: undefined,
+        images: [],
+        media: [{ url: "https://example.com/v.mp4", kind: "video" }],
+      },
+    };
+
+    const result = JSON.parse(buildMediaProcessInputsJson(node, graph, artifacts));
+    expect(result.operation).toBe("extract_frames");
+    expect(result.params).toEqual({ fps: 2, maxFrames: 4 });
+    expect(result.videoUrl).toBe("https://example.com/v.mp4");
+    expect(result.videoUrls).toEqual(["https://example.com/v.mp4"]);
+  });
+
+  it("changes when upstream video URL changes", () => {
+    const graph: WorkflowGraph = {
+      nodes: [
+        {
+          id: "vid1",
+          type: "input_video",
+          data: { videoUrl: "" },
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "mp1",
+          type: "media_process",
+          data: { operation: "extract_audio" },
+          position: { x: 200, y: 0 },
+        },
+      ],
+      edges: [{ id: "e1", source: "vid1", target: "mp1" }],
+    };
+    const node = graph.nodes.find((n) => n.id === "mp1")! as Extract<
+      (typeof graph.nodes)[number],
+      { type: "media_process" }
+    >;
+
+    const json1 = buildMediaProcessInputsJson(node, graph, {
+      vid1: { text: undefined, images: [], media: [{ url: "https://a.com/1.mp4", kind: "video" }] },
+    });
+    const json2 = buildMediaProcessInputsJson(node, graph, {
+      vid1: { text: undefined, images: [], media: [{ url: "https://a.com/2.mp4", kind: "video" }] },
+    });
+    expect(json1).not.toBe(json2);
   });
 });

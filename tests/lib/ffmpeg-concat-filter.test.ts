@@ -33,4 +33,21 @@ describe("concat_videos normalization helpers", () => {
   it("rejects inputCount < 2", () => {
     expect(() => buildConcatFilterGraph(1)).toThrow(/>= 2/);
   });
+
+  it("uses scale+pad when target resolution is provided", () => {
+    const g = buildConcatFilterGraph(2, 1080, 1920);
+    expect(g).toBe(
+      "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24[v0];" +
+        "[1:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24[v1];" +
+        "[v0][v1]concat=n=2:v=1:a=0[outv]",
+    );
+  });
+
+  it("falls back to legacy VF when target resolution is omitted", () => {
+    const withTarget = buildConcatFilterGraph(2, 1280, 720);
+    const withoutTarget = buildConcatFilterGraph(2);
+    expect(withTarget).not.toBe(withoutTarget);
+    expect(withoutTarget).toContain("min(1280");
+    expect(withTarget).toContain("force_original_aspect_ratio=decrease");
+  });
 });

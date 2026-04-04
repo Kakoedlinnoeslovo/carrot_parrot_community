@@ -73,6 +73,40 @@ export function listMappableInputKeysFromSchema(schema: RJSFSchema | Record<stri
   return orderInputHandleKeys(keys);
 }
 
+/**
+ * Required input keys — rendered as wire target handles on fal_model nodes.
+ * Uses the OpenAPI schema `required` array to decide which fields must be wired.
+ */
+export function listRequiredInputKeys(
+  schema: RJSFSchema | Record<string, unknown> | null | undefined,
+): string[] {
+  if (!schema || typeof schema !== "object") return [];
+  const props = (schema as { properties?: Record<string, unknown> }).properties;
+  const required = (schema as { required?: string[] }).required ?? [];
+  if (!props || typeof props !== "object") return [];
+  const keys = required.filter(
+    (k) => k in props && propertyIsMappableForInputHandle(props[k]),
+  );
+  return orderInputHandleKeys(keys);
+}
+
+/**
+ * Optional input keys — not in the OpenAPI `required` array.
+ * Editable inside the node via double-click (sidebar form), not shown as wire handles.
+ */
+export function listOptionalInputKeys(
+  schema: RJSFSchema | Record<string, unknown> | null | undefined,
+): string[] {
+  if (!schema || typeof schema !== "object") return [];
+  const props = (schema as { properties?: Record<string, unknown> }).properties;
+  const requiredSet = new Set((schema as { required?: string[] }).required ?? []);
+  if (!props || typeof props !== "object") return [];
+  const keys = Object.keys(props).filter(
+    (k) => !requiredSet.has(k) && propertyIsMappableForInputHandle(props[k]),
+  );
+  return orderInputHandleKeys(keys);
+}
+
 function outputPropIsMappable(prop: unknown): boolean {
   return propertyIsMappableForInputHandle(prop);
 }

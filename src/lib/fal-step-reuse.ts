@@ -76,3 +76,25 @@ export function canReuseFalStepFromPrevious(
   if (prev.outputsJson == null || prev.outputsJson === "") return false;
   return falInputsJsonMatchesPrevious(prev.inputsJson, nextPayload);
 }
+
+/**
+ * Generic step reuse: compares any JSON-serializable `inputsJson` payload
+ * against the previous run's step. Works for media_process or any non-fal node type.
+ */
+export function canReuseStepFromPrevious(
+  prev: PreviousFalStepLike | undefined,
+  nextInputsJson: string,
+): boolean {
+  if (!prev || prev.status !== "succeeded") return false;
+  if (prev.outputsJson == null || prev.outputsJson === "") return false;
+  if (prev.inputsJson == null || prev.inputsJson === "") return false;
+  let prevParsed: unknown;
+  let nextParsed: unknown;
+  try {
+    prevParsed = JSON.parse(prev.inputsJson);
+    nextParsed = JSON.parse(nextInputsJson);
+  } catch {
+    return false;
+  }
+  return deepEqual(prevParsed, nextParsed);
+}
