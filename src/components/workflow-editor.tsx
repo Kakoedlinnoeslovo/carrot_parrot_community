@@ -1010,10 +1010,13 @@ function FalModelNode({ id, data }: NodeProps) {
     falInput?: Record<string, unknown>;
     _inputHandleKeys?: string[];
     _runStepStatus?: string;
+    _runStepError?: string;
   };
   const stepStatus = d._runStepStatus;
+  const stepErr = typeof d._runStepError === "string" ? d._runStepError.trim() : "";
   const isRunning = stepStatus === "running";
   const isQueued = stepStatus === "pending";
+  const isFailed = stepStatus === "failed" || Boolean(stepErr);
   const preview =
     typeof d.falInput?.prompt === "string"
       ? d.falInput.prompt
@@ -1025,14 +1028,20 @@ function FalModelNode({ id, data }: NodeProps) {
   return (
     <div
       className={`relative min-w-[min(100vw,320px)] max-w-[360px] rounded-lg border bg-zinc-900/90 px-3 py-2 shadow-lg transition-[box-shadow,border-color] duration-300 ${
-        isRunning
-          ? "border-orange-400/95 ring-2 ring-orange-400/75 animate-pulse shadow-[0_0_22px_rgba(251,146,60,0.22)]"
-          : isQueued
-            ? "border-amber-900/80 ring-1 ring-amber-700/40"
-            : "border-zinc-600"
+        isFailed
+          ? "border-red-500/90 ring-1 ring-red-500/50"
+          : isRunning
+            ? "border-orange-400/95 ring-2 ring-orange-400/75 animate-pulse shadow-[0_0_22px_rgba(251,146,60,0.22)]"
+            : isQueued
+              ? "border-amber-900/80 ring-1 ring-amber-700/40"
+              : "border-zinc-600"
       }`}
     >
-      {isRunning ? (
+      {isFailed ? (
+        <div className="absolute -right-1 -top-2 z-10 rounded-md bg-red-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow-md">
+          Failed
+        </div>
+      ) : isRunning ? (
         <div className="absolute -right-1 -top-2 z-10 rounded-md bg-orange-500 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow-md">
           Running
         </div>
@@ -1048,6 +1057,11 @@ function FalModelNode({ id, data }: NodeProps) {
       </div>
 
       <p className="mb-3 line-clamp-3 text-xs text-zinc-300">{preview || "—"}</p>
+      {stepErr ? (
+        <p className="mb-3 line-clamp-4 whitespace-pre-wrap break-words text-[11px] leading-snug text-red-400">
+          {stepErr}
+        </p>
+      ) : null}
 
       <div className="flex gap-2 border-t border-zinc-800 pt-2">
         <div className="min-w-0 flex-1">
@@ -1260,6 +1274,8 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
   const [origin, setOrigin] = useState("");
   /** Per-node run step status while a run is in progress (from GET /api/runs/:id). */
   const [runStepByNodeId, setRunStepByNodeId] = useState<Record<string, string>>({});
+  /** Per-node fal step error message (validation / API) when a step fails. */
+  const [runStepErrorByNodeId, setRunStepErrorByNodeId] = useState<Record<string, string>>({});
   const [runStartedAtIso, setRunStartedAtIso] = useState<string | null>(null);
   const [runClock, setRunClock] = useState(0);
 
@@ -1379,13 +1395,18 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
         const mid = String((n.data as { falModelId?: string }).falModelId ?? "").trim();
         const detail = mid ? detailByEndpoint[mid] : undefined;
         const inputKeys = listMappableInputKeysFromSchema(detail?.input ?? null);
-        const stepSt = runShowsStepOverlay ? runStepByNodeId[n.id] : undefined;
+        const rawSt = runStepByNodeId[n.id];
+        const stepErr = runStepErrorByNodeId[n.id]?.trim();
+        const showStepUi =
+          runShowsStepOverlay || rawSt === "failed" || Boolean(stepErr);
+        const stepSt = showStepUi && rawSt ? rawSt : undefined;
         return {
           ...n,
           data: {
             ...(n.data as Record<string, unknown>),
             _inputHandleKeys: inputKeys,
             ...(stepSt ? { _runStepStatus: stepSt } : {}),
+            ...(stepErr ? { _runStepError: stepErr } : {}),
           },
         };
       }
@@ -1402,7 +1423,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       }
       return n;
     });
-  }, [nodes, artifactPreviewByNodeId, detailByEndpoint, runShowsStepOverlay, runStepByNodeId]);
+  }, [nodes, artifactPreviewByNodeId, detailByEndpoint, runShowsStepOverlay, runStepByNodeId, runStepErrorByNodeId]);
 
   const selectedNode = nodes.find((n) => n.id === selectedId) ?? null;
 
@@ -1709,7 +1730,12 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
           status: string;
           error: string | null;
           startedAt?: string;
-          steps?: { nodeId: string; status?: string; outputsJson?: string | null }[];
+          steps?: {
+            nodeId: string;
+            status?: string;
+            outputsJson?: string | null;
+            error?: string | null;
+          }[];
         };
       };
       setRunStatus(data.run.status);
@@ -1717,10 +1743,13 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       if (data.run.startedAt) setRunStartedAtIso(data.run.startedAt);
       const steps = data.run.steps ?? [];
       const stepStatusMap: Record<string, string> = {};
+      const stepErrorMap: Record<string, string> = {};
       for (const s of steps) {
         if (s.nodeId && s.status) stepStatusMap[s.nodeId] = s.status;
+        if (s.nodeId && s.error?.trim()) stepErrorMap[s.nodeId] = s.error.trim();
       }
       setRunStepByNodeId(stepStatusMap);
+      setRunStepErrorByNodeId(stepErrorMap);
       const byNode: Record<string, RunOutputItem[]> = {};
       const textByNode: Record<string, string> = {};
       for (const s of steps) {
@@ -1790,6 +1819,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
     setOutputsMissing(false);
     setRunError(null);
     setRunStepByNodeId({});
+    setRunStepErrorByNodeId({});
     setRunStartedAtIso(null);
     setRunClock(0);
     setRunStatus("pending");

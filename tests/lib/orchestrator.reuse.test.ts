@@ -31,6 +31,7 @@ vi.mock("@/lib/fal-client", () => ({
   fal: falMockCtx.mockFal,
   createFalClientFromApiKey: () => falMockCtx.mockFal,
   formatFalClientError: (e: unknown) => String(e),
+  getFalErrorLogPayload: () => ({}),
 }));
 
 vi.mock("@/lib/fal-hosted-workflow", () => ({
@@ -174,7 +175,7 @@ describe("scheduleReadyFalSteps reuse", () => {
         }
         return null;
         // Prisma client return type is a thenable; tests only need plain objects.
-      }) as typeof prisma.run.findUnique,
+      }) as unknown as typeof prisma.run.findUnique,
     );
 
     vi.mocked(prisma.run.findFirst).mockResolvedValue({
@@ -208,7 +209,7 @@ describe("scheduleReadyFalSteps reuse", () => {
           Object.assign(row, data);
         }
         return row!;
-      }) as typeof prisma.runStep.update,
+      }) as unknown as typeof prisma.runStep.update,
     );
 
     await scheduleReadyFalSteps("run-new", graph, falMockCtx.mockFal as unknown as FalClient);
@@ -250,7 +251,7 @@ describe("scheduleReadyFalSteps reuse", () => {
           Object.assign(row, data);
         }
         return row!;
-      }) as typeof prisma.runStep.update,
+      }) as unknown as typeof prisma.runStep.update,
     );
 
     vi.mocked(falMockCtx.submit).mockResolvedValue({

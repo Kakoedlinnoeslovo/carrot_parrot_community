@@ -1,4 +1,13 @@
-import { ApiError, createFalClient, fal, ValidationError, type FalClient } from "@fal-ai/client";
+import {
+  ApiError,
+  createFalClient,
+  fal,
+  ValidationError,
+  type FalClient,
+} from "@fal-ai/client";
+
+/** Max chars for `falDetail` in structured logs (Vercel / stdout). */
+const FAL_ERROR_LOG_DETAIL_MAX = 2000;
 
 /** Doc index and links: `src/lib/fal-docs-reference.ts` */
 
@@ -78,6 +87,18 @@ export function isTransientFalNetworkError(e: unknown): boolean {
 }
 
 /**
+ * True when `queue.result` failed because the job output is not available yet.
+ * Do not treat 422 (ValidationError) as not-ready — that is invalid input.
+ */
+export function isFalResultNotReadyError(e: unknown): boolean {
+  if (e instanceof ValidationError) return false;
+  if (!(e instanceof ApiError)) return false;
+  const s = e.status;
+  if (s === 404 || s === 202 || s === 425) return true;
+  return false;
+}
+
+/**
  * fal `queue.submit` / `queue.result` throw `ValidationError` on 422 with a Pydantic-style `body.detail`,
  * but `error.message` is often just "Unprocessable Entity". Surface field errors for the UI / DB.
  */
@@ -109,6 +130,53 @@ export function formatFalClientError(e: unknown): string {
     return appendCauseAndFetchHint(e.message, e);
   }
   return String(e);
+}
+
+function truncateForLog(s: string, max = FAL_ERROR_LOG_DETAIL_MAX): string {
+  if (s.length <= max) return s;
+  return `${s.slice(0, max)}…`;
+}
+
+/**
+ * Structured fields for server logs (no prompts / full inputs). Safe to merge into falLogError.
+ */
+export function getFalErrorLogPayload(e: unknown): Record<string, string | number | undefined> {
+  const out: Record<string, string | number | undefined> = {};
+  if (e instanceof ValidationError) {
+    out.httpStatus = e.status;
+    if (e.requestId) out.falRequestId = e.requestId;
+    const parts = e.fieldErrors.map((err) => {
+      const path = err.loc?.length ? err.loc.join(".") : "body";
+      return `${path}: ${err.msg}`;
+    });
+    if (parts.length) {
+      out.falDetail = truncateForLog(parts.join("; "));
+    } else if (e.body != null && typeof e.body === "object") {
+      try {
+        out.falDetail = truncateForLog(JSON.stringify(e.body));
+      } catch {
+        out.falDetail = truncateForLog(String(e.body));
+      }
+    }
+    return out;
+  }
+  if (e instanceof ApiError) {
+    out.httpStatus = e.status;
+    if (e.requestId) out.falRequestId = e.requestId;
+    if (e.body != null && typeof e.body === "object") {
+      try {
+        const s = JSON.stringify(e.body);
+        if (s !== "{}") out.falDetail = truncateForLog(s);
+      } catch {
+        /* ignore */
+      }
+    }
+    return out;
+  }
+  if (e instanceof Error) {
+    out.falDetail = truncateForLog(e.message);
+  }
+  return out;
 }
 
 export { fal };

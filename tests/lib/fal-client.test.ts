@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ValidationError } from "@fal-ai/client";
-import { formatFalClientError, isTransientFalNetworkError } from "@/lib/fal-client";
+import { ApiError, ValidationError } from "@fal-ai/client";
+import {
+  formatFalClientError,
+  getFalErrorLogPayload,
+  isFalResultNotReadyError,
+  isTransientFalNetworkError,
+} from "@/lib/fal-client";
 
 describe("formatFalClientError", () => {
   it("expands ValidationError field errors instead of only HTTP status text", () => {
@@ -28,6 +33,26 @@ describe("formatFalClientError", () => {
     expect(s).toContain("Server could not reach fal.ai");
   });
 
+  it("getFalErrorLogPayload includes httpStatus and falDetail for ValidationError", () => {
+    const e = new ValidationError({
+      message: "Unprocessable Entity",
+      status: 422,
+      body: {
+        detail: [
+          {
+            loc: ["body", "image_urls"],
+            msg: "Field required",
+            type: "missing",
+          },
+        ],
+      },
+    });
+    const p = getFalErrorLogPayload(e);
+    expect(p.httpStatus).toBe(422);
+    expect(p.falDetail).toContain("image_urls");
+    expect(p.falDetail).toContain("Field required");
+  });
+
   it("formats AggregateError cause", () => {
     const e = new TypeError("fetch failed", {
       cause: new AggregateError([new Error("first"), new Error("second")]),
@@ -51,5 +76,45 @@ describe("isTransientFalNetworkError", () => {
 
   it("returns false for unrelated errors", () => {
     expect(isTransientFalNetworkError(new Error("validation"))).toBe(false);
+  });
+});
+
+describe("isFalResultNotReadyError", () => {
+  it("returns true for ApiError 404, 202, 425", () => {
+    expect(
+      isFalResultNotReadyError(
+        new ApiError({ message: "Not found", status: 404, body: {} }),
+      ),
+    ).toBe(true);
+    expect(
+      isFalResultNotReadyError(
+        new ApiError({ message: "Accepted", status: 202, body: {} }),
+      ),
+    ).toBe(true);
+    expect(
+      isFalResultNotReadyError(
+        new ApiError({ message: "Too early", status: 425, body: {} }),
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false for ValidationError (422)", () => {
+    expect(
+      isFalResultNotReadyError(
+        new ValidationError({
+          message: "Unprocessable Entity",
+          status: 422,
+          body: { detail: [] },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("returns false for other ApiError statuses", () => {
+    expect(
+      isFalResultNotReadyError(
+        new ApiError({ message: "Bad", status: 500, body: {} }),
+      ),
+    ).toBe(false);
   });
 });

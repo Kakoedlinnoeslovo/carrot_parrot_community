@@ -5,6 +5,8 @@ import { getAppUrl } from "@/lib/env";
 import {
   createFalClientFromApiKey,
   formatFalClientError,
+  getFalErrorLogPayload,
+  isFalResultNotReadyError,
   isTransientFalNetworkError,
   type FalClient,
 } from "@/lib/fal-client";
@@ -16,6 +18,7 @@ import {
   sanitizeFalInput,
   type MergeArtifact,
 } from "@/lib/fal-merge-input";
+import { missingWiredRasterInputsMessage } from "@/lib/fal-preflight";
 import { canReuseFalStepFromPrevious } from "@/lib/fal-step-reuse";
 import type { RunStep as PrismaRunStep } from "@prisma/client";
 import {
@@ -438,9 +441,20 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const POLL_FAL_MAX_ATTEMPTS = 3;
+/** Wall-clock cap for `queue.result` polling (status subscription removed — it could hang when status never reaches COMPLETED). */
+const POLL_FAL_MAX_MS = 15 * 60 * 1000;
+const POLL_FAL_BACKOFF_INITIAL_MS = 400;
+const POLL_FAL_BACKOFF_MAX_MS = 5000;
 
-async function pollFalUntilComplete(
+function pollFalBackoffMs(attempt: number): number {
+  return Math.min(
+    POLL_FAL_BACKOFF_INITIAL_MS * Math.pow(1.5, Math.max(0, attempt - 1)),
+    POLL_FAL_BACKOFF_MAX_MS,
+  );
+}
+
+/** Exported for tests. Polls `queue.result` until success (never uses `subscribeToStatus`, which can hang). */
+export async function pollFalUntilComplete(
   fal: FalClient,
   runId: string,
   stepId: string,
@@ -452,9 +466,12 @@ async function pollFalUntilComplete(
 
   const pollT0 = Date.now();
   let lastError: unknown;
-  for (let attempt = 0; attempt < POLL_FAL_MAX_ATTEMPTS; attempt++) {
+  let pollAttempt = 0;
+  let fatal = false;
+
+  while (Date.now() - pollT0 < POLL_FAL_MAX_MS) {
+    pollAttempt++;
     try {
-      await fal.queue.subscribeToStatus(endpointId, { requestId });
       const res = await fal.queue.result(endpointId, { requestId });
       const media = extractMediaFromFalData(res.data);
       const images = imageUrlsFromMediaItems(media);
@@ -483,30 +500,49 @@ async function pollFalUntilComplete(
         endpointId,
         requestId,
         durationMs: Date.now() - pollT0,
-        attempt: attempt + 1,
+        attempt: pollAttempt,
       });
 
       await continueRunAfterFalOutput(runId);
       return;
     } catch (e) {
       lastError = e;
-      if (attempt < POLL_FAL_MAX_ATTEMPTS - 1 && isTransientFalNetworkError(e)) {
+      if (isFalResultNotReadyError(e)) {
+        if (pollAttempt === 1 || pollAttempt % 24 === 0) {
+          falLogWarn("fal.poll.result_not_ready", {
+            runId,
+            stepId,
+            endpointId,
+            requestId,
+            attempt: pollAttempt,
+            error: formatFalClientError(e),
+            ...getFalErrorLogPayload(e),
+          });
+        }
+        await sleep(pollFalBackoffMs(pollAttempt));
+        continue;
+      }
+      if (isTransientFalNetworkError(e)) {
         falLogWarn("fal.poll.retry", {
           runId,
           stepId,
           endpointId,
           requestId,
-          attempt: attempt + 1,
+          attempt: pollAttempt,
           error: formatFalClientError(e),
+          ...getFalErrorLogPayload(e),
         });
-        await sleep(400 * (attempt + 1));
+        await sleep(pollFalBackoffMs(pollAttempt));
         continue;
       }
+      fatal = true;
       break;
     }
   }
 
-  const msg = formatFalClientError(lastError);
+  const msg = fatal && lastError != null
+    ? formatFalClientError(lastError)
+    : `Timed out after ${Math.round(POLL_FAL_MAX_MS / 60000)} minutes waiting for fal queue result.`;
   falLogError("fal.poll.fail", {
     runId,
     stepId,
@@ -514,6 +550,7 @@ async function pollFalUntilComplete(
     requestId,
     durationMs: Date.now() - pollT0,
     error: msg,
+    ...getFalErrorLogPayload(lastError),
   });
   const step = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
   if (step?.status === "succeeded") {
@@ -892,6 +929,25 @@ export async function scheduleReadyFalSteps(
       falInput: mergedInput,
     });
 
+    const preflightMsg = missingWiredRasterInputsMessage(graph, node, mergedInput);
+    if (preflightMsg) {
+      falLogError("fal.preflight.reject", {
+        runId,
+        stepId: step.id,
+        endpointId: node.data.falModelId,
+        error: preflightMsg,
+      });
+      await prisma.runStep.update({
+        where: { id: step.id },
+        data: { status: "failed", error: preflightMsg, inputsJson },
+      });
+      await prisma.run.update({
+        where: { id: runId },
+        data: { status: "failed", finishedAt: new Date(), error: preflightMsg },
+      });
+      continue;
+    }
+
     await prisma.runStep.update({
       where: { id: step.id },
       data: { status: "running", inputsJson },
@@ -926,7 +982,33 @@ export async function scheduleReadyFalSteps(
         inputByteLength: meta.inputByteLength,
       });
 
-      void pollFalUntilComplete(fal!, runId, step.id, node.data.falModelId, queued.request_id);
+      void pollFalUntilComplete(fal!, runId, step.id, node.data.falModelId, queued.request_id).catch(
+        async (e) => {
+          const msg = formatFalClientError(e);
+          falLogError("fal.poll.unhandled", {
+            runId,
+            stepId: step.id,
+            endpointId: node.data.falModelId,
+            requestId: queued.request_id,
+            error: msg,
+            ...getFalErrorLogPayload(e),
+          });
+          try {
+            const cur = await prisma.runStep.findFirst({ where: { id: step.id, runId } });
+            if (cur?.status === "succeeded" || cur?.status === "failed") return;
+            await prisma.runStep.update({
+              where: { id: step.id },
+              data: { status: "failed", error: msg },
+            });
+            await prisma.run.update({
+              where: { id: runId },
+              data: { status: "failed", finishedAt: new Date(), error: msg },
+            });
+          } catch (dbErr) {
+            falLogError("fal.poll.unhandled_db", { error: dbErr instanceof Error ? dbErr.message : String(dbErr) });
+          }
+        },
+      );
     } catch (e) {
       const msg = formatFalClientError(e);
       falLogError("fal.queue.submit.error", {
@@ -936,6 +1018,7 @@ export async function scheduleReadyFalSteps(
         inputKeys: meta.inputKeys.join(","),
         inputByteLength: meta.inputByteLength,
         error: msg,
+        ...getFalErrorLogPayload(e),
       });
       await prisma.runStep.update({
         where: { id: step.id },
@@ -1039,7 +1122,18 @@ export async function handleFalWebhook(runId: string, stepId: string, body: unkn
 
   if (b?.status === "ERROR") {
     const err = String(b.error ?? "fal error");
-    falLogError("fal.webhook.error_status", { runId, stepId, error: err });
+    const detail =
+      b.payload != null && typeof b.payload === "object"
+        ? JSON.stringify(b.payload).slice(0, 2000)
+        : undefined;
+    falLogError("fal.webhook.error_status", {
+      runId,
+      stepId,
+      error: err,
+      ...(detail ? { falDetail: detail } : {}),
+      bodyKeys:
+        body && typeof body === "object" ? Object.keys(body as object).join(",") : "",
+    });
     await prisma.runStep.update({
       where: { id: stepId },
       data: {
