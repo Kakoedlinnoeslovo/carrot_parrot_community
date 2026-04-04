@@ -25,6 +25,13 @@ import { graphNeedsFalKey, hasEffectiveFalApiKey } from "@/lib/fal-effective-key
 import { assertAcyclic, safeParseWorkflowGraph } from "@/lib/workflow-graph";
 import { z } from "zod";
 
+/**
+ * Full `processRun` (fal + parallel `media_process` / ffmpeg) runs inside `after()` on this
+ * invocation. Without raising the limit, Vercel’s default cap can kill the function mid-step; steps
+ * stay `running` in the DB while polls keep returning 200 (“Success” in logs).
+ */
+export const maxDuration = 300;
+
 /** JSON body validator — Zod is like Pydantic: `.safeParse` returns ok/err without throwing. */
 const postSchema = z.object({
   workflowId: z.string().min(1),
