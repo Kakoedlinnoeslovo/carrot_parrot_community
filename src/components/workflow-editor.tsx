@@ -1837,7 +1837,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       }
       setArtifactPreviewByNodeId(byNode);
       setStepArtifactTextByNodeId(textByNode);
-      if (data.run.status === "succeeded" || data.run.status === "failed") {
+      if (data.run.status === "succeeded" || data.run.status === "failed" || data.run.status === "cancelled") {
         clearInterval(t);
         if (runId && runTerminalLoggedRef.current !== runId) {
           runTerminalLoggedRef.current = runId;
@@ -1921,6 +1921,16 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
     track(AnalyticsEvent.workflowRunStart, { workflowId });
     setRunId(j.runId!);
     setRunStatus("running");
+  };
+
+  const stopWorkflow = async () => {
+    if (!runId) return;
+    try {
+      await fetch(`/api/runs/${runId}/cancel`, { method: "POST" });
+      setRunStatus("cancelled");
+    } catch {
+      // polling will pick up the actual status
+    }
   };
 
   const resumePausedRun = async () => {
@@ -2143,13 +2153,23 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
           >
             {saveState === "saving" ? "Saving…" : "Save"}
           </button>
-          <button
-            type="button"
-            onClick={() => void runWorkflow()}
-            className="rounded-md bg-orange-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-orange-400"
-          >
-            Run workflow
-          </button>
+          {runStatus === "running" || runStatus === "pending" ? (
+            <button
+              type="button"
+              onClick={() => void stopWorkflow()}
+              className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500"
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void runWorkflow()}
+              className="rounded-md bg-orange-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-orange-400"
+            >
+              Run workflow
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void publish()}
@@ -2179,7 +2199,10 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
           </p>
           {runStatus && (
             <p className="mt-2 text-sm text-zinc-300">
-              Status: <span className="text-orange-400">{runStatus}</span>
+              Status:{" "}
+              <span className={runStatus === "cancelled" ? "text-red-400" : "text-orange-400"}>
+                {runStatus}
+              </span>
             </p>
           )}
           {runPaused && (

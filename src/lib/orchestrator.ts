@@ -287,7 +287,7 @@ async function continueRunAfterFalOutput(runId: string) {
     include: { workflow: true },
   });
   if (!run) return;
-  if (run.status === "paused") return;
+  if (run.status === "paused" || run.status === "cancelled") return;
 
   const graph = parseWorkflowGraph(run.workflow.graphJson);
   const key = await resolveEffectiveFalApiKey(run.userId);
@@ -462,7 +462,7 @@ export async function pollFalUntilComplete(
   requestId: string,
 ) {
   const existing = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
-  if (!existing || existing.status === "succeeded" || existing.status === "failed") return;
+  if (!existing || existing.status === "succeeded" || existing.status === "failed" || existing.status === "cancelled") return;
 
   const pollT0 = Date.now();
   let lastError: unknown;
@@ -471,6 +471,10 @@ export async function pollFalUntilComplete(
 
   while (Date.now() - pollT0 < POLL_FAL_MAX_MS) {
     pollAttempt++;
+
+    const currentStep = await prisma.runStep.findFirst({ where: { id: stepId, runId } });
+    if (!currentStep || currentStep.status === "succeeded" || currentStep.status === "failed" || currentStep.status === "cancelled") return;
+
     try {
       const res = await fal.queue.result(endpointId, { requestId });
       const media = extractMediaFromFalData(res.data);
@@ -618,7 +622,7 @@ export async function processRun(runId: string) {
     include: { workflow: true, steps: true },
   });
   if (!run) return;
-  if (run.status === "succeeded" || run.status === "failed" || run.status === "paused") return;
+  if (run.status === "succeeded" || run.status === "failed" || run.status === "paused" || run.status === "cancelled") return;
 
   const graph = parseWorkflowGraph(run.workflow.graphJson);
   const needsFal = graph.nodes.some((n) => n.type === "fal_model" || n.type === "media_process");
@@ -767,7 +771,7 @@ export async function scheduleReadyMediaProcessSteps(
   fal: FalClient | null,
 ) {
   const runRow = await prisma.run.findFirst({ where: { id: runId }, select: { status: true } });
-  if (runRow?.status === "paused") return;
+  if (runRow?.status === "paused" || runRow?.status === "cancelled") return;
 
   const needs = graph.nodes.some((n) => n.type === "media_process");
   if (!needs) return;
@@ -782,6 +786,9 @@ export async function scheduleReadyMediaProcessSteps(
   const reuseMap = await loadReuseReferenceStepsByNodeId(runId);
 
   for (;;) {
+    const runCheck = await prisma.run.findFirst({ where: { id: runId }, select: { status: true } });
+    if (runCheck?.status === "cancelled") return;
+
     let steps = await prisma.runStep.findMany({ where: { runId } });
     const byNode = Object.fromEntries(steps.map((s) => [s.nodeId, s]));
     const failed = steps.some((s) => s.status === "failed");
@@ -878,7 +885,7 @@ export async function scheduleReadyFalSteps(
   fal: FalClient | null,
 ) {
   const runRow = await prisma.run.findFirst({ where: { id: runId }, select: { status: true } });
-  if (runRow?.status === "paused") return;
+  if (runRow?.status === "paused" || runRow?.status === "cancelled") return;
 
   const needsFal = graph.nodes.some((n) => n.type === "fal_model");
   if (needsFal && !fal) {
@@ -1130,6 +1137,9 @@ async function failRunStepBlockedModel(runId: string, stepId: string) {
 }
 
 async function finalizeRunIfDone(runId: string) {
+  const run = await prisma.run.findFirst({ where: { id: runId }, select: { status: true } });
+  if (run?.status === "cancelled") return;
+
   const steps = await prisma.runStep.findMany({ where: { runId } });
   if (steps.some((s) => s.status === "failed")) {
     const err = steps.find((s) => s.status === "failed")?.error ?? "Step failed";
@@ -1184,7 +1194,7 @@ export async function handleFalWebhook(runId: string, stepId: string, body: unkn
   });
   if (!step) return;
 
-  if (step.status === "succeeded") {
+  if (step.status === "succeeded" || step.status === "cancelled") {
     return;
   }
 

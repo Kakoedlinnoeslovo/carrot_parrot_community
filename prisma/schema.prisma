@@ -108,7 +108,7 @@ model Run {
   id         String    @id @default(cuid())
   workflowId String
   userId     String
-  status     String // pending | running | succeeded | failed
+  status     String // pending | running | succeeded | failed | cancelled
   error      String?
   startedAt  DateTime  @default(now())
   finishedAt DateTime?
@@ -127,7 +127,7 @@ model RunStep {
   id            String @id @default(cuid())
   runId         String
   nodeId        String
-  status        String // pending | running | succeeded | failed
+  status        String // pending | running | succeeded | failed | cancelled
   falRequestId  String?
   inputsJson    String?
   outputsJson   String?
