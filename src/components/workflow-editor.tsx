@@ -442,7 +442,10 @@ function ReviewGateNode({ id, data }: NodeProps) {
 const CONCAT_VIDEO_SLOT_COUNT = 8;
 
 function MediaProcessNode({ id, data }: NodeProps) {
-  const d = data as { operation?: string; previewItems?: RunOutputItem[] };
+  const d = data as { operation?: string; previewItems?: RunOutputItem[]; _runStepStatus?: string };
+  const stepStatus = d._runStepStatus;
+  const isRunning = stepStatus === "running";
+  const isQueued = stepStatus === "pending";
   const op = d.operation ?? "extract_audio";
   const items = d.previewItems ?? [];
   const imageItems = items.filter((x) => x.kind === "image" || x.kind === "unknown");
@@ -450,7 +453,24 @@ function MediaProcessNode({ id, data }: NodeProps) {
   const audioItem = items.find((x) => x.kind === "audio");
   const isConcat = op === "concat_videos";
   return (
-    <div className="min-w-[220px] max-w-[min(100vw,400px)] rounded-lg border border-teal-500/45 bg-zinc-900/90 px-3 py-2 pr-2 shadow-lg">
+    <div
+      className={`relative min-w-[220px] max-w-[min(100vw,400px)] rounded-lg border bg-zinc-900/90 px-3 py-2 pr-2 shadow-lg transition-[box-shadow,border-color] duration-300 ${
+        isRunning
+          ? "border-orange-400/95 ring-2 ring-orange-400/75 animate-pulse shadow-[0_0_22px_rgba(251,146,60,0.22)]"
+          : isQueued
+            ? "border-amber-900/80 ring-1 ring-amber-700/40"
+            : "border-teal-500/45"
+      }`}
+    >
+      {isRunning ? (
+        <div className="absolute -right-1 -top-2 z-10 rounded-md bg-orange-500 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow-md">
+          Running
+        </div>
+      ) : isQueued ? (
+        <div className="absolute -right-1 -top-2 z-10 rounded-md bg-zinc-700 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-200 shadow-md">
+          Queued
+        </div>
+      ) : null}
       <div className="mb-1 text-xs font-medium uppercase tracking-wide text-teal-400">Media process</div>
       <div className="text-[10px] text-zinc-500">Node {id.slice(0, 8)}…</div>
       <p className="mt-1 font-mono text-xs text-teal-200/90">{op}</p>
@@ -1291,6 +1311,17 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
     return { total, done, runningIds, queuedIds };
   }, [nodes, runStepByNodeId]);
 
+  /** ffmpeg / upload steps — not included in falProgress; marketing remix stays "running" here after all fal models finish. */
+  const mediaProgress = useMemo(() => {
+    const ids = nodes.filter((n) => n.type === "media_process").map((n) => n.id);
+    const total = ids.length;
+    if (total === 0) return { total: 0, done: 0, runningIds: [] as string[], queuedIds: [] as string[] };
+    const done = ids.filter((id) => runStepByNodeId[id] === "succeeded").length;
+    const runningIds = ids.filter((id) => runStepByNodeId[id] === "running");
+    const queuedIds = ids.filter((id) => runStepByNodeId[id] === "pending");
+    return { total, done, runningIds, queuedIds };
+  }, [nodes, runStepByNodeId]);
+
   /** Recomputed every render; `runClock` ticks once per second during a run so ETA stays fresh. */
   let roughEtaSeconds: number | null = null;
   if (runStartedAtIso && runInProgress && falProgress.total > 0 && falProgress.done >= 1) {
@@ -1313,6 +1344,15 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       ? String((activeRunningNode.data as { falModelId?: string }).falModelId ?? "").slice(0, 48)
       : null;
 
+  const activeRunningMediaNodeId = mediaProgress.runningIds[0] ?? null;
+  const activeRunningMediaNode = activeRunningMediaNodeId
+    ? nodes.find((n) => n.id === activeRunningMediaNodeId)
+    : undefined;
+  const activeRunningMediaLabel =
+    activeRunningMediaNode?.type === "media_process"
+      ? String((activeRunningMediaNode.data as { operation?: string }).operation ?? "media_process").slice(0, 40)
+      : null;
+
   const nodesForFlow = useMemo(() => {
     return nodes.map((n) => {
       if (n.type === "output_preview") {
@@ -1325,10 +1365,14 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       }
       if (n.type === "media_process") {
         const items = artifactPreviewByNodeId[n.id];
-        if (!items?.length) return n;
+        const stepSt = runShowsStepOverlay ? runStepByNodeId[n.id] : undefined;
         return {
           ...n,
-          data: { ...(n.data as Record<string, unknown>), previewItems: items },
+          data: {
+            ...(n.data as Record<string, unknown>),
+            ...(stepSt ? { _runStepStatus: stepSt } : {}),
+            ...(items?.length ? { previewItems: items } : {}),
+          },
         };
       }
       if (n.type === "fal_model") {
@@ -2009,8 +2053,10 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
         <div className="mt-6 border-t border-zinc-800 pt-4">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Run</h3>
           <p className="mt-1 text-xs text-zinc-600">
-            The server polls fal when your app is not reachable by webhooks (e.g. localhost). Watch
-            the canvas: the active fal node pulses orange while that step runs.
+            The server polls fal when your app is not reachable by webhooks (e.g. localhost). Watch the canvas:
+            the active <span className="font-mono">fal_model</span> or <span className="font-mono">media_process</span>{" "}
+            node pulses orange while that step runs. Encode / media steps (ffmpeg: slideshow, concat, mux) are listed
+            separately below.
           </p>
           {runStatus && (
             <p className="mt-2 text-sm text-zinc-300">
@@ -2040,7 +2086,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
           )}
           {runInProgress && falProgress.total > 0 && (
             <p className="mt-1 text-xs text-zinc-500">
-              Model steps:{" "}
+              Fal model steps:{" "}
               <span className="text-zinc-300">
                 {falProgress.done} / {falProgress.total} finished
               </span>
@@ -2051,11 +2097,36 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
               ) : null}
             </p>
           )}
-          {runInProgress && activeRunningModelLabel && (
+          {runInProgress && mediaProgress.total > 0 && (
+            <p className="mt-1 text-xs text-zinc-500">
+              Media / encode steps:{" "}
+              <span className="text-zinc-300">
+                {mediaProgress.done} / {mediaProgress.total} finished
+              </span>
+              {mediaProgress.runningIds.length > 0 ? (
+                <span className="text-orange-400/90"> · ffmpeg or upload running</span>
+              ) : mediaProgress.queuedIds.length > 0 ? (
+                <span className="text-amber-500/80"> · pending</span>
+              ) : null}
+            </p>
+          )}
+          {runInProgress &&
+            falProgress.total > 0 &&
+            falProgress.done >= falProgress.total &&
+            mediaProgress.total > 0 &&
+            mediaProgress.done < mediaProgress.total && (
+              <p className="mt-1 text-[11px] leading-snug text-zinc-500">
+                All fal models are done. The run stays active while the server finishes encode / upload (
+                {mediaProgress.total - mediaProgress.done} media step
+                {mediaProgress.total - mediaProgress.done === 1 ? "" : "s"} left) — often a few minutes for concat
+                and mux.
+              </p>
+            )}
+          {runInProgress && (activeRunningModelLabel || activeRunningMediaLabel) && (
             <p className="mt-1 text-xs text-zinc-500">
               Now on:{" "}
               <span className="break-all font-mono text-[11px] text-orange-300/95">
-                {activeRunningModelLabel}
+                {activeRunningModelLabel ?? `media_process · ${activeRunningMediaLabel}`}
               </span>
             </p>
           )}
