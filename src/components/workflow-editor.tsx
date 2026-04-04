@@ -1419,6 +1419,17 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       ? String((activeRunningMediaNode.data as { operation?: string }).operation ?? "media_process").slice(0, 40)
       : null;
 
+  const edgeDerivedHandlesByTarget = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const e of edges) {
+      const th = (e.targetHandle ?? "").trim();
+      if (!th) continue;
+      if (!map.has(e.target)) map.set(e.target, new Set());
+      map.get(e.target)!.add(th);
+    }
+    return map;
+  }, [edges]);
+
   const nodesForFlow = useMemo(() => {
     return nodes.map((n) => {
       if (n.type === "output_preview") {
@@ -1452,7 +1463,11 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
         const mid = String((n.data as { falModelId?: string }).falModelId ?? "").trim();
         const detail = mid ? detailByEndpoint[mid] : undefined;
         const schema = detail?.input ?? null;
-        const inputKeys = listRequiredInputKeys(schema);
+        const schemaInputKeys = listRequiredInputKeys(schema);
+        const edgeKeys = [...(edgeDerivedHandlesByTarget.get(n.id) ?? [])];
+        const inputKeys = schema
+          ? [...new Set([...schemaInputKeys, ...edgeKeys])]
+          : edgeKeys;
         const optionalKeys = listOptionalInputKeys(schema);
         const rawSt = runStepByNodeId[n.id];
         const stepErr = runStepErrorByNodeId[n.id]?.trim();
@@ -1485,7 +1500,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       }
       return n;
     });
-  }, [nodes, artifactPreviewByNodeId, stepArtifactTextByNodeId, detailByEndpoint, runShowsStepOverlay, runStepByNodeId, runStepErrorByNodeId, runStepReusedByNodeId]);
+  }, [nodes, edges, edgeDerivedHandlesByTarget, artifactPreviewByNodeId, stepArtifactTextByNodeId, detailByEndpoint, runShowsStepOverlay, runStepByNodeId, runStepErrorByNodeId, runStepReusedByNodeId]);
 
   const selectedNode = nodes.find((n) => n.id === selectedId) ?? null;
 

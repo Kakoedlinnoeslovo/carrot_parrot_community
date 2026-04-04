@@ -337,7 +337,7 @@ function buildMarketingRemixLanesGraphImpl(
     source: "mp_mux",
     target: "out1",
     sourceHandle: "out",
-    targetHandle: null,
+    targetHandle: "in",
   });
 
   const raw = { nodes, edges };
