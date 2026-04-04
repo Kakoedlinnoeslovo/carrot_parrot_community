@@ -904,6 +904,8 @@ export async function scheduleReadyFalSteps(
   steps = await prisma.runStep.findMany({ where: { runId } });
   const byNode = Object.fromEntries(steps.map((s) => [s.nodeId, s]));
 
+  const backgroundTasks: Promise<void>[] = [];
+
   for (const node of graph.nodes) {
     if (node.type !== "fal_model") continue;
     const step = byNode[node.id];
@@ -954,7 +956,18 @@ export async function scheduleReadyFalSteps(
     });
 
     if (isFalHostedWorkflowEndpoint(node.data.falModelId)) {
-      void runHostedWorkflowStep(fal!, runId, step.id, node.data.falModelId, mergedInput);
+      backgroundTasks.push(
+        runHostedWorkflowStep(fal!, runId, step.id, node.data.falModelId, mergedInput).catch(
+          (e) => {
+            falLogError("fal.workflow.step.unhandled", {
+              runId,
+              stepId: step.id,
+              endpointId: node.data.falModelId,
+              error: e instanceof Error ? e.message : String(e),
+            });
+          },
+        ),
+      );
       continue;
     }
 
@@ -982,32 +995,34 @@ export async function scheduleReadyFalSteps(
         inputByteLength: meta.inputByteLength,
       });
 
-      void pollFalUntilComplete(fal!, runId, step.id, node.data.falModelId, queued.request_id).catch(
-        async (e) => {
-          const msg = formatFalClientError(e);
-          falLogError("fal.poll.unhandled", {
-            runId,
-            stepId: step.id,
-            endpointId: node.data.falModelId,
-            requestId: queued.request_id,
-            error: msg,
-            ...getFalErrorLogPayload(e),
-          });
-          try {
-            const cur = await prisma.runStep.findFirst({ where: { id: step.id, runId } });
-            if (cur?.status === "succeeded" || cur?.status === "failed") return;
-            await prisma.runStep.update({
-              where: { id: step.id },
-              data: { status: "failed", error: msg },
+      backgroundTasks.push(
+        pollFalUntilComplete(fal!, runId, step.id, node.data.falModelId, queued.request_id).catch(
+          async (e) => {
+            const msg = formatFalClientError(e);
+            falLogError("fal.poll.unhandled", {
+              runId,
+              stepId: step.id,
+              endpointId: node.data.falModelId,
+              requestId: queued.request_id,
+              error: msg,
+              ...getFalErrorLogPayload(e),
             });
-            await prisma.run.update({
-              where: { id: runId },
-              data: { status: "failed", finishedAt: new Date(), error: msg },
-            });
-          } catch (dbErr) {
-            falLogError("fal.poll.unhandled_db", { error: dbErr instanceof Error ? dbErr.message : String(dbErr) });
-          }
-        },
+            try {
+              const cur = await prisma.runStep.findFirst({ where: { id: step.id, runId } });
+              if (cur?.status === "succeeded" || cur?.status === "failed") return;
+              await prisma.runStep.update({
+                where: { id: step.id },
+                data: { status: "failed", error: msg },
+              });
+              await prisma.run.update({
+                where: { id: runId },
+                data: { status: "failed", finishedAt: new Date(), error: msg },
+              });
+            } catch (dbErr) {
+              falLogError("fal.poll.unhandled_db", { error: dbErr instanceof Error ? dbErr.message : String(dbErr) });
+            }
+          },
+        ),
       );
     } catch (e) {
       const msg = formatFalClientError(e);
@@ -1029,6 +1044,10 @@ export async function scheduleReadyFalSteps(
         data: { status: "failed", finishedAt: new Date(), error: msg },
       });
     }
+  }
+
+  if (backgroundTasks.length > 0) {
+    await Promise.allSettled(backgroundTasks);
   }
 }
 
