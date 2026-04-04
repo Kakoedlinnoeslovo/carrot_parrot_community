@@ -647,10 +647,12 @@ function InputGroupNode({ id, data }: NodeProps) {
 }
 
 function OutputPreviewNode({ data }: NodeProps) {
-  const d = data as { title?: string; previewItems?: RunOutputItem[] };
+  const d = data as { title?: string; previewItems?: RunOutputItem[]; previewText?: string };
   const title = d.title ?? "Result";
   const items = d.previewItems ?? [];
+  const text = d.previewText ?? "";
   const primary = items[0];
+  const hasContent = primary || text;
   return (
     <div className="min-w-[220px] max-w-[min(100vw,320px)] rounded-lg border border-violet-500/45 bg-zinc-900/90 px-3 py-2 shadow-lg">
       <Handle
@@ -660,32 +662,42 @@ function OutputPreviewNode({ data }: NodeProps) {
         className={`${FLOW_HANDLE_BASE} !border-violet-500/40 !bg-violet-500`}
       />
       <div className="mb-1 text-xs font-medium uppercase tracking-wide text-violet-400">{title}</div>
-      {primary ? (
-        primary.kind === "video" ? (
-          <video
-            src={primary.url}
-            controls
-            playsInline
-            className="mt-1 max-h-52 w-full rounded border border-zinc-700 bg-black"
-          />
-        ) : primary.kind === "audio" ? (
-          <audio src={primary.url} controls className="mt-1 w-full min-w-[200px]" />
-        ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={primary.url}
-            alt=""
-            className="mt-1 max-h-52 w-full rounded border border-zinc-700 object-contain"
-          />
-        )
+      {hasContent ? (
+        <>
+          {text && (
+            <p className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded border border-zinc-700/60 bg-zinc-800/60 px-2 py-1.5 text-xs leading-relaxed text-zinc-200">
+              {text}
+            </p>
+          )}
+          {primary ? (
+            primary.kind === "video" ? (
+              <video
+                src={primary.url}
+                controls
+                playsInline
+                className="mt-1 max-h-52 w-full rounded border border-zinc-700 bg-black"
+              />
+            ) : primary.kind === "audio" ? (
+              <audio src={primary.url} controls className="mt-1 w-full min-w-[200px]" />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={primary.url}
+                alt=""
+                className="mt-1 max-h-52 w-full rounded border border-zinc-700 object-contain"
+              />
+            )
+          ) : null}
+          {items.length > 1 ? (
+            <p className="mt-1 text-[10px] text-zinc-600">+{items.length - 1} more in the Run panel</p>
+          ) : null}
+        </>
       ) : (
         <p className="text-xs leading-relaxed text-zinc-500">
-          Connect the last step here, then run — image or video appears on the canvas.
+          Connect the upstream node that produces the final image or video. After a
+          successful run, the media appears inside this node on the canvas.
         </p>
       )}
-      {items.length > 1 ? (
-        <p className="mt-1 text-[10px] text-zinc-600">+{items.length - 1} more in the Run panel</p>
-      ) : null}
     </div>
   );
 }
@@ -1202,6 +1214,15 @@ function collectRunOutputs(steps: { outputsJson?: string | null }[]): RunOutputI
   return items;
 }
 
+function collectRunText(steps: { outputsJson?: string | null }[]): string {
+  const parts: string[] = [];
+  for (const s of steps) {
+    const a = parseArtifactJson(s.outputsJson);
+    if (typeof a.text === "string" && a.text.trim()) parts.push(a.text.trim());
+  }
+  return parts.join("\n\n");
+}
+
 type Props = {
   workflowId: string;
   initialGraph: WorkflowGraph;
@@ -1264,6 +1285,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
   const [pubSlug, setPubSlug] = useState<string | null>(slug);
   const [pubVis, setPubVis] = useState(visibility);
   const [runOutputs, setRunOutputs] = useState<RunOutputItem[]>([]);
+  const [runOutputText, setRunOutputText] = useState("");
   const [outputsMissing, setOutputsMissing] = useState(false);
   const [artifactPreviewByNodeId, setArtifactPreviewByNodeId] = useState<
     Record<string, RunOutputItem[]>
@@ -1373,10 +1395,15 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
     return nodes.map((n) => {
       if (n.type === "output_preview") {
         const items = artifactPreviewByNodeId[n.id];
-        if (!items?.length) return n;
+        const text = stepArtifactTextByNodeId[n.id] ?? "";
+        if (!items?.length && !text) return n;
         return {
           ...n,
-          data: { ...(n.data as Record<string, unknown>), previewItems: items },
+          data: {
+            ...(n.data as Record<string, unknown>),
+            ...(items?.length ? { previewItems: items } : {}),
+            ...(text ? { previewText: text } : {}),
+          },
         };
       }
       if (n.type === "media_process") {
@@ -1423,7 +1450,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
       }
       return n;
     });
-  }, [nodes, artifactPreviewByNodeId, detailByEndpoint, runShowsStepOverlay, runStepByNodeId, runStepErrorByNodeId]);
+  }, [nodes, artifactPreviewByNodeId, stepArtifactTextByNodeId, detailByEndpoint, runShowsStepOverlay, runStepByNodeId, runStepErrorByNodeId]);
 
   const selectedNode = nodes.find((n) => n.id === selectedId) ?? null;
 
@@ -1774,7 +1801,8 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
         if (data.run.status === "succeeded") {
           let items = collectRunOutputs(steps);
           let ev = collectWorkflowStreamEvents(steps);
-          if (items.length === 0) {
+          let txt = collectRunText(steps);
+          if (items.length === 0 && !txt) {
             const r2 = await fetch(`/api/runs/${runId}`);
             if (r2.ok) {
               const d2 = (await r2.json()) as {
@@ -1782,11 +1810,13 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
               };
               items = collectRunOutputs(d2.run.steps ?? []);
               ev = collectWorkflowStreamEvents(d2.run.steps ?? []);
+              txt = collectRunText(d2.run.steps ?? []);
             }
           }
           setRunOutputs(items);
+          setRunOutputText(txt);
           setWorkflowStreamEvents(ev);
-          setOutputsMissing(items.length === 0);
+          setOutputsMissing(items.length === 0 && !txt);
         }
       } else {
         setWorkflowStreamEvents(collectWorkflowStreamEvents(steps));
@@ -1813,6 +1843,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
     await save();
     runTerminalLoggedRef.current = null;
     setRunOutputs([]);
+    setRunOutputText("");
     setArtifactPreviewByNodeId({});
     setStepArtifactTextByNodeId({});
     setWorkflowStreamEvents([]);
@@ -2171,7 +2202,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
           )}
           {runStatus === "succeeded" && outputsMissing && (
             <p className="mt-2 text-xs text-amber-500/90">
-              Run finished but no media URLs were stored. Check your fal API key in Settings, fal logs, and server terminal
+              Run finished but no outputs (text or media) were stored. Check your fal API key in Settings, fal logs, and server terminal
               for errors.
             </p>
           )}
@@ -2193,6 +2224,11 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+          {runOutputText && (
+            <div className="mt-3 max-h-40 overflow-y-auto rounded border border-zinc-700/60 bg-zinc-800/60 px-2.5 py-2">
+              <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-zinc-200">{runOutputText}</p>
             </div>
           )}
           {runOutputs.length > 0 && (
@@ -2627,8 +2663,10 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
                 onChange={(e) => updateSelectedData({ title: e.target.value })}
               />
               <p className="text-[11px] leading-snug text-zinc-600">
-                Connect the upstream node that produces the final image or video. After a successful
-                run, the media appears inside this node on the canvas.
+                Connect the upstream node that produces the final image or video. After a
+                successful run, the media appears inside this node on the canvas.
+                Encode / media steps (ffmpeg: slideshow, concat, mux) are listed
+                separately below.
               </p>
             </div>
           )}
