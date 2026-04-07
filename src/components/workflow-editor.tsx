@@ -1332,6 +1332,7 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
   const [modelQuery, setModelQuery] = useState("");
   const [modelHits, setModelHits] = useState<FalModelHit[]>([]);
   const [modelSearchLoading, setModelSearchLoading] = useState(false);
+  const [modelSearchError, setModelSearchError] = useState<string | null>(null);
   const [detailByEndpoint, setDetailByEndpoint] = useState<
     Record<string, { input: RJSFSchema | null; output: RJSFSchema | null }>
   >({});
@@ -1531,13 +1532,24 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
           if (responseIndicatesMissingFalKey(r.status, j.error)) {
             setFalKeyBanner(true);
             setModelHits([]);
+            setModelSearchError(null);
+            return;
+          }
+          if (!r.ok) {
+            setModelSearchError(j.error ?? r.statusText);
+            setModelHits([]);
             return;
           }
           setFalKeyBanner(false);
+          setModelSearchError(null);
           setModelHits(Array.isArray(j.models) ? j.models : []);
         })
-        .catch(() => {
+        .catch((e) => {
           setModelHits([]);
+          const msg = e instanceof Error ? e.message : String(e);
+          setModelSearchError(/HTML page|DOCTYPE|expected JSON/i.test(msg)
+            ? "Could not reach fal.ai — the API returned a non-JSON response."
+            : msg);
         })
         .finally(() => setModelSearchLoading(false));
     }, 280);
@@ -2829,6 +2841,9 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
                 <p className="mt-0.5 text-[10px] text-zinc-600">
                   {modelSearchLoading ? "Loading…" : `${modelHits.length} results`}
                 </p>
+                {modelSearchError && (
+                  <p className="mt-0.5 text-[10px] text-red-400">{modelSearchError}</p>
+                )}
                 <ul className="mt-1 max-h-36 overflow-y-auto rounded border border-zinc-800">
                   {modelHits.map((m) => (
                     <li key={m.endpoint_id}>
@@ -2859,7 +2874,32 @@ function WorkflowEditorCanvas({ workflowId, initialGraph, title, visibility, slu
               </div>
 
               {detailLoading && <p className="text-xs text-zinc-500">Loading input schema…</p>}
-              {detailError && <p className="text-xs text-red-400">{detailError}</p>}
+              {detailError && (
+                <div className="rounded border border-red-900/40 bg-red-950/30 px-2 py-1.5">
+                  <p className="text-xs text-red-400">
+                    {/HTML page|DOCTYPE|expected JSON/i.test(detailError)
+                      ? "Could not load model schema — the fal.ai API returned a non-JSON response. This usually means the API is temporarily unavailable or your API key may be invalid."
+                      : detailError}
+                  </p>
+                  <button
+                    type="button"
+                    className="mt-1 text-[10px] text-orange-400 hover:underline"
+                    onClick={() => {
+                      if (selectedFalModelId) {
+                        detailRequestedRef.current.delete(selectedFalModelId);
+                        setDetailErrors((prev) => {
+                          const next = { ...prev };
+                          delete next[selectedFalModelId];
+                          return next;
+                        });
+                        setNodes((nds) => [...nds]);
+                      }
+                    }}
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
 
               <div>
                 <label className="text-xs text-zinc-500">Model input</label>

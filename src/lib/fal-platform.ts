@@ -34,6 +34,18 @@ export async function falPlatformFetch(path: string, init?: RequestInit, falApiK
   return fetch(url, { ...init, headers });
 }
 
+async function safeJson<T>(res: Response, label: string): Promise<T> {
+  const ct = res.headers.get("content-type") ?? "";
+  if (!ct.includes("application/json")) {
+    const body = await res.text();
+    const hint = body.trimStart().startsWith("<!")
+      ? "upstream returned an HTML page (possible CDN challenge or gateway error)"
+      : body.slice(0, 120);
+    throw new Error(`${label}: expected JSON but received ${ct || "unknown content-type"} — ${hint}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 export async function listFalModels(
   params: {
     limit?: number;
@@ -56,7 +68,7 @@ export async function listFalModels(
     const t = await res.text();
     throw new Error(`fal platform list models failed: ${res.status} ${t.slice(0, 200)}`);
   }
-  return res.json() as Promise<FalModelsListResponse>;
+  return safeJson<FalModelsListResponse>(res, "fal platform list models");
 }
 
 /** Single model with OpenAPI (expand=openapi-3.0). */
@@ -73,7 +85,7 @@ export async function getFalModelWithOpenApi(
     const t = await res.text();
     throw new Error(`fal platform model detail failed: ${res.status} ${t.slice(0, 200)}`);
   }
-  const data = (await res.json()) as FalModelsListResponse;
+  const data = await safeJson<FalModelsListResponse>(res, "fal platform model detail");
   return data.models?.[0] ?? null;
 }
 
