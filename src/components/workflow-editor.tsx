@@ -1048,6 +1048,7 @@ function FalModelNode({ id, data }: NodeProps) {
   const outputKeys = [...FAL_OUTPUT_HANDLES];
   const rowClass = "relative flex min-h-[22px] w-full items-center gap-0";
   const handleOffset = "left-[-1px]";
+  const [showOptionalPorts, setShowOptionalPorts] = useState(false);
   return (
     <div
       className={`relative min-w-[min(100vw,320px)] max-w-[360px] rounded-lg border bg-zinc-900/90 px-3 py-2 shadow-lg transition-[box-shadow,border-color] duration-300 ${
@@ -1118,11 +1119,37 @@ function FalModelNode({ id, data }: NodeProps) {
           </div>
           {optionalKeys.length > 0 ? (
             <div className="mt-2 border-t border-zinc-800/60 pt-1.5">
-              <p className="text-[9px] leading-snug text-zinc-500">
-                <span className="font-semibold text-zinc-400">{optionalKeys.length}</span>{" "}
-                optional setting{optionalKeys.length !== 1 ? "s" : ""}{" "}
-                <span className="text-zinc-600">(double-click to edit)</span>
-              </p>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowOptionalPorts((v) => !v);
+                }}
+                className="text-[10px] text-zinc-400 underline-offset-2 hover:text-amber-300 hover:underline"
+                title="Reveal optional input handles you can wire from upstream nodes"
+              >
+                {showOptionalPorts ? "Hide" : "Show"} {optionalKeys.length} optional port
+                {optionalKeys.length !== 1 ? "s" : ""}
+              </button>
+              {showOptionalPorts ? (
+                <div className="mt-1 flex flex-col gap-0.5">
+                  {optionalKeys.map((key) => (
+                    <div key={`opt-${key}`} className={rowClass}>
+                      <Handle
+                        type="target"
+                        position={Position.Left}
+                        id={key}
+                        className={`${FLOW_HANDLE_BASE} !absolute ${handleOffset} !top-1/2 !-translate-y-1/2 !border-dashed !border-amber-400/40 !bg-amber-500/40`}
+                        title={`targetHandle="${key}" → falInput.${key} (optional)`}
+                      />
+                      <span className="ml-4 font-mono text-[10px] leading-tight text-zinc-400">
+                        {key}{" "}
+                        <span className="text-[8px] uppercase tracking-wide text-zinc-600">opt</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
