@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Form from "@rjsf/core";
 import validator from "@rjsf/validator-ajv8";
 import type { RJSFSchema, UiSchema } from "@rjsf/utils";
+import { uploadFileToFalStorage } from "@/lib/fal-storage-upload-client";
 
 type Props = {
   schema: RJSFSchema | null;
@@ -137,20 +138,6 @@ function hasImageUrlStringField(schema: RJSFSchema | null): boolean {
   return jsonSchemaPropertyType(p) === "string";
 }
 
-async function uploadImageToFal(file: File): Promise<string> {
-  const fd = new FormData();
-  fd.append("file", file);
-  const res = await fetch("/api/fal/storage/upload", { method: "POST", body: fd });
-  const j = (await res.json()) as { url?: string; error?: string };
-  if (!res.ok) {
-    throw new Error(j.error ?? res.statusText);
-  }
-  if (!j.url) {
-    throw new Error("Upload did not return a URL");
-  }
-  return j.url;
-}
-
 function ImageUrlRow({
   value,
   onChange,
@@ -187,7 +174,7 @@ function ImageUrlRow({
               setErr(null);
               setBusy(true);
               try {
-                const url = await uploadImageToFal(f);
+                const url = await uploadFileToFalStorage(f);
                 onUpload(url);
               } catch (ex) {
                 setErr(ex instanceof Error ? ex.message : String(ex));

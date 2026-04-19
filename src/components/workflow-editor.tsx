@@ -35,6 +35,7 @@ import { computePrimaryImageInputKey } from "@/lib/fal-openapi-wiring";
 import { listMappableInputKeysFromSchema, listMappableOutputKeysFromSchema, listRequiredInputKeys, listOptionalInputKeys } from "@/lib/fal-schema-handles";
 import { AnalyticsEvent, track } from "@/lib/analytics";
 import { parseArtifactJson } from "@/lib/artifact-json";
+import { uploadFileToFalStorage } from "@/lib/fal-storage-upload-client";
 
 /** True when the server rejected a request because no fal.ai key is configured for this user. */
 function responseIndicatesMissingFalKey(status: number, errorText: string | undefined): boolean {
@@ -723,17 +724,9 @@ function InputImageNodeSettings({
     setErr(null);
     setBusy(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch("/api/fal/storage/upload", { method: "POST", body: fd });
-      const j = (await res.json()) as { url?: string; error?: string };
-      if (!res.ok) {
-        throw new Error(j.error ?? res.statusText);
-      }
-      if (j.url) {
-        onImageUrlChange(j.url);
-        track(AnalyticsEvent.storageUploadSuccess, { context: "input_image" });
-      }
+      const url = await uploadFileToFalStorage(file);
+      onImageUrlChange(url);
+      track(AnalyticsEvent.storageUploadSuccess, { context: "input_image" });
     } catch (e) {
       const msg = (e instanceof Error ? e.message : String(e)).slice(0, 120);
       track(AnalyticsEvent.storageUploadError, { context: "input_image", message: msg });
@@ -799,17 +792,9 @@ function InputVideoNodeSettings({
     setErr(null);
     setBusy(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch("/api/fal/storage/upload", { method: "POST", body: fd });
-      const j = (await res.json()) as { url?: string; error?: string };
-      if (!res.ok) {
-        throw new Error(j.error ?? res.statusText);
-      }
-      if (j.url) {
-        onVideoUrlChange(j.url);
-        track(AnalyticsEvent.storageUploadSuccess, { context: "input_video" });
-      }
+      const url = await uploadFileToFalStorage(file);
+      onVideoUrlChange(url);
+      track(AnalyticsEvent.storageUploadSuccess, { context: "input_video" });
     } catch (e) {
       const msg = (e instanceof Error ? e.message : String(e)).slice(0, 120);
       track(AnalyticsEvent.storageUploadError, { context: "input_video", message: msg });
@@ -885,17 +870,11 @@ function InputGroupNodeSettings({
     setErr(null);
     setBusyIdx(index);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch("/api/fal/storage/upload", { method: "POST", body: fd });
-      const j = (await res.json()) as { url?: string; error?: string };
-      if (!res.ok) throw new Error(j.error ?? res.statusText);
-      if (j.url) {
-        const next = [...slots];
-        next[index] = { ...next[index]!, value: j.url };
-        onSlotsChange(next);
-        track(AnalyticsEvent.storageUploadSuccess, { context: "input_group_slot" });
-      }
+      const url = await uploadFileToFalStorage(file);
+      const next = [...slots];
+      next[index] = { ...next[index]!, value: url };
+      onSlotsChange(next);
+      track(AnalyticsEvent.storageUploadSuccess, { context: "input_group_slot" });
     } catch (e) {
       const msg = (e instanceof Error ? e.message : String(e)).slice(0, 120);
       track(AnalyticsEvent.storageUploadError, { context: "input_group_slot", message: msg });

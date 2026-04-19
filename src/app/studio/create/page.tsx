@@ -5,6 +5,7 @@ import { useCallback, useState } from "react";
 import Link from "next/link";
 
 import { MarketingExamplesCarousel } from "@/components/marketing-examples-carousel";
+import { uploadFileToFalStorage } from "@/lib/fal-storage-upload-client";
 import type { MarketingVideoAnalysis } from "@/lib/marketing-video-analyzer";
 
 type Phase = "idle" | "uploading" | "creating";
@@ -60,12 +61,8 @@ export default function CreateMarketingWorkflowPage() {
     setPhase("uploading");
     setProgressLabel("Uploading to fal storage…");
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch("/api/fal/storage/upload", { method: "POST", body: fd });
-      const j = (await res.json()) as { url?: string; error?: string };
-      if (!res.ok) throw new Error(j.error ?? res.statusText);
-      if (j.url) setVideoUrl(j.url);
+      const url = await uploadFileToFalStorage(file);
+      setVideoUrl(url);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
